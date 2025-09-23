@@ -1,0 +1,6 @@
+websockets>=11.0
+python-dotenv>=1.0.0
+fastcrc>=0.3.2
+lxml>=6.0.2
+pymavlink>=2.4.49
+
