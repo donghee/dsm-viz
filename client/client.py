@@ -26,11 +26,13 @@ mav.srcComponent = 1
 def format_packet_data(data):
     """패킷 데이터를 출력용으로 포맷팅"""
     output = []
-    for i in range(0, len(data), 16):
-        hex_part = ' '.join(f'{b:02x}' for b in data[i:i+16])
-        ascii_part = ''.join(chr(b) if 32 <= b < 127 else '.' for b in data[i:i+16])
-        output.append(f'{i:04x}: {hex_part:<47} {ascii_part}')
-    return '\n'.join(output)
+    #  for i in range(0, len(data), 16):
+    #      hex_part = ' '.join(f'{b:02x}' for b in data[i:i+16])
+    #      ascii_part = ''.join(chr(b) if 32 <= b < 127 else '.' for b in data[i:i+16])
+    #      output.append(f'{i:04x}: {hex_part:<47} {ascii_part}')
+    #  return '\n'.join(output)
+    #  print([f'{b:02x}' for b in data])
+    return [f'{b:02x}' for b in data]
 
 async def send_to_websocket(websocket, message):
     """웹소켓으로 메시지 전송"""

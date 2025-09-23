@@ -64,6 +64,7 @@ async def index_handler(request):
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -105,6 +106,12 @@ async def index_handler(request):
             </button>
             <button id="gcs-tab" class="flex-1 py-2 px-4 text-sm font-medium text-center rounded-md transition-colors duration-200 text-gray-600 hover:text-light-accent hover:bg-gray-50" onclick="switchTab('gcs')">
                 GCS (Ground Control Station)
+            </button>
+            <button id="fcc-graph-tab" class="flex-1 py-2 px-4 text-sm font-medium text-center rounded-md transition-colors duration-200 text-gray-600 hover:text-light-accent hover:bg-gray-50" onclick="switchTab('fcc-graph')">
+                FCC -> GCS Graph
+            </button>
+             <button id="gcs-graph-tab" class="flex-1 py-2 px-4 text-sm font-medium text-center rounded-md transition-colors duration-200 text-gray-600 hover:text-light-accent hover:bg-gray-50" onclick="switchTab('gcs-graph')">
+                GCS -> FCC Graph
             </button>
         </nav>
     </div>
@@ -190,6 +197,21 @@ async def index_handler(request):
         </div>
     </div>
 
+    <div id="fcc-graph-content" class="tab-content hidden flex flex-col gap-5 h-[80vh]">
+        <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
+            <h3 class="text-light-text font-bold mb-3 text-center">Packet Entropy Analysis - FCC → GCS</h3>
+            <div id="fcc-entropy-chart" class="w-full h-96"></div>
+        </div>
+    </div>
+
+    <div id="gcs-graph-content" class="tab-content hidden flex flex-col gap-5 h-[80vh]">
+        <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
+            <h3 class="text-light-text font-bold mb-3 text-center">Packet Entropy Analysis - GCS → FCC</h3>
+            <div id="gcs-entropy-chart" class="w-full h-96"></div>
+        </div>
+    </div>
+
+
     <div id="gcs-content" class="tab-content hidden flex gap-5 h-[80vh]">
         <div class="flex-1 flex flex-col">
             <div class="text-light-text font-bold mb-1 text-center bg-light-card border border-light-border p-2 rounded-t-lg">MAVLink</div>
@@ -204,7 +226,6 @@ async def index_handler(request):
             <textarea id="gcs-ciphertext" class="w-full h-full bg-white text-light-text font-mono text-xs border border-light-border border-t-0 p-2 overflow-y-auto whitespace-pre-wrap resize-none focus:outline-none focus:border-light-accent rounded-b-lg" readonly></textarea>
         </div>
     </div>
-
 
     <script>
         // Tab switching functionality
@@ -244,7 +265,7 @@ async def index_handler(request):
         const ws = new WebSocket('ws://localhost:8000/ws');
 
         // 최대 라인 수 제한 (성능 최적화)
-        const MAX_LINES = 500;
+        const MAX_LINES = 100;
 
         function addMessage(textarea, message, className = '') {
             const timestamp = new Date().toLocaleTimeString();
@@ -343,22 +364,84 @@ async def index_handler(request):
                     const targetTextarea = source === 'fcc' ? fccCiphertext : gcsCiphertext;
                     addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
                     addMessage(targetTextarea, data.data, 'packet-data');
-                    addMessage(targetTextarea, '---', 'packet-data');
+
+                    // Calculate and store entropy for packets
+                    if (source === 'fcc') {
+                        const entropy = calculateEntropy(data.data);
+                        entropyData.ciphertext.push(entropy);
+                        entropyData.timestamps.push(new Date());
+
+                        // Limit data points for performance
+                        if (entropyData.ciphertext.length > maxDataPoints) {
+                            entropyData.ciphertext.shift();
+                            entropyData.timestamps.shift();
+                        }
+
+                        updateFccEntropyChart();
+                    } else if (source === 'gcs') {
+                        const entropy = calculateEntropy(data.data);
+                        gcsEntropyData.ciphertext.push(entropy);
+                        gcsEntropyData.timestamps.push(new Date());
+
+                        // Limit data points for performance
+                        if (gcsEntropyData.ciphertext.length > maxDataPoints) {
+                            gcsEntropyData.ciphertext.shift();
+                            gcsEntropyData.timestamps.shift();
+                        }
+
+                        updateGcsEntropyChart();
+                    }
                 } else if (data.packet_type === 'plaintext') {
                     const targetTextarea = source === 'fcc' ? fccPlaintext : gcsPlaintext;
                     addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
                     addMessage(targetTextarea, data.data, 'packet-data');
-                    addMessage(targetTextarea, '---', 'packet-data');
+
+                    // Calculate and store entropy for packets
+                    if (source === 'fcc') {
+                        const entropy = calculateEntropy(data.data);
+                        entropyData.plaintext.push(entropy);
+
+                        // Ensure both arrays have the same length
+                        if (entropyData.plaintext.length > entropyData.ciphertext.length) {
+                            entropyData.ciphertext.push(0);
+                        }
+
+                        // Limit data points for performance
+                        if (entropyData.plaintext.length > maxDataPoints) {
+                            entropyData.plaintext.shift();
+                            if (entropyData.plaintext.length < entropyData.ciphertext.length) {
+                                entropyData.ciphertext.shift();
+                            }
+                        }
+
+                        updateFccEntropyChart();
+                    } else if (source === 'gcs') {
+                        const entropy = calculateEntropy(data.data);
+                        gcsEntropyData.plaintext.push(entropy);
+
+                        // Ensure both arrays have the same length
+                        if (gcsEntropyData.plaintext.length > gcsEntropyData.ciphertext.length) {
+                            gcsEntropyData.ciphertext.push(0);
+                        }
+
+                        // Limit data points for performance
+                        if (gcsEntropyData.plaintext.length > maxDataPoints) {
+                            gcsEntropyData.plaintext.shift();
+                            if (gcsEntropyData.plaintext.length < gcsEntropyData.ciphertext.length) {
+                                gcsEntropyData.ciphertext.shift();
+                            }
+                        }
+
+                        updateGcsEntropyChart();
+                    }
                 } else if (data.packet_type === 'mavlink') {
                     const targetTextarea = source === 'fcc' ? fccMavlink : gcsMavlink;
                     addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
                     addMessage(targetTextarea, JSON.stringify(data.data, null, 2), 'packet-data');
-                    addMessage(targetTextarea, '---', 'packet-data');
                 } else {
                     // 기본적으로 FCC ciphertext에 출력
                     addMessage(fccCiphertext, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
                     addMessage(fccCiphertext, data.data, 'packet-data');
-                    addMessage(fccCiphertext, '---', 'packet-data');
                 }
             }
         };
@@ -380,6 +463,365 @@ async def index_handler(request):
             addMessage(gcsPlaintext, 'WebSocket 오류: ' + error, 'status');
             addMessage(gcsMavlink, 'WebSocket 오류: ' + error, 'status');
         };
+
+        // Entropy calculation and visualization
+        let entropyData = {
+            plaintext: [],
+            ciphertext: [],
+            timestamps: []
+        };
+
+        let gcsEntropyData = {
+            plaintext: [],
+            ciphertext: [],
+            timestamps: []
+        };
+
+        let maxDataPoints = 50;
+
+        function calculateEntropy(data) {
+            if (!data || data.length === 0) return 0;
+
+            // Convert string to bytes if needed
+            const bytes = typeof data === 'string' ?
+                new TextEncoder().encode(data) : data;
+
+            // Count frequency of each byte value
+            const frequencies = new Array(256).fill(0);
+            for (let i = 0; i < bytes.length; i++) {
+                frequencies[bytes[i]]++;
+            }
+
+            // Calculate entropy using Shannon formula
+            let entropy = 0;
+            const len = bytes.length;
+            for (let i = 0; i < 256; i++) {
+                if (frequencies[i] > 0) {
+                    const prob = frequencies[i] / len;
+                    entropy -= prob * Math.log2(prob);
+                }
+            }
+
+            return entropy;
+        }
+
+        function updateFccEntropyChart() {
+            const margin = {top: 20, right: 80, bottom: 30, left: 50};
+            const width = document.getElementById('fcc-entropy-chart').clientWidth - margin.left - margin.right;
+            const height = 350 - margin.top - margin.bottom;
+
+            // Clear previous chart
+            d3.select("#fcc-entropy-chart").selectAll("*").remove();
+
+            const svg = d3.select("#fcc-entropy-chart")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            if (entropyData.plaintext.length === 0) {
+                svg.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", height / 2)
+                    .attr("text-anchor", "middle")
+                    .style("font-size", "16px")
+                    .style("fill", "#6b7280")
+                    .text("No data available");
+                return;
+            }
+
+            // Scales
+            const xScale = d3.scaleLinear()
+                .domain([0, Math.max(entropyData.plaintext.length - 1, 1)])
+                .range([0, width]);
+
+            const maxEntropy = Math.max(
+                d3.max(entropyData.plaintext) || 0,
+                d3.max(entropyData.ciphertext) || 0,
+                5
+            );
+
+            const yScale = d3.scaleLinear()
+                .domain([0, maxEntropy])
+                .range([height, 0]);
+
+            // Line generators
+            const plainLine = d3.line()
+                .x((d, i) => xScale(i))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            const cipherLine = d3.line()
+                .x((d, i) => xScale(i))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            // Add axes
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(xScale));
+
+            svg.append("g")
+                .call(d3.axisLeft(yScale));
+
+            // Add axis labels
+            svg.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 0 - margin.left)
+                .attr("x", 0 - (height / 2))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .style("font-size", "12px")
+                .text("Entropy (bits)");
+
+            svg.append("text")
+                .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
+                .style("text-anchor", "middle")
+                .style("font-size", "12px")
+                .text("Packet Number");
+
+            // Add lines
+            if (entropyData.plaintext.length > 0) {
+                svg.append("path")
+                    .datum(entropyData.plaintext)
+                    .attr("fill", "none")
+                    .attr("stroke", "#10b981")
+                    .attr("stroke-width", 2)
+                    .attr("d", plainLine);
+            }
+
+            if (entropyData.ciphertext.length > 0) {
+                svg.append("path")
+                    .datum(entropyData.ciphertext)
+                    .attr("fill", "none")
+                    .attr("stroke", "#ef4444")
+                    .attr("stroke-width", 2)
+                    .attr("d", cipherLine);
+            }
+
+            // Add legend
+            const legend = svg.append("g")
+                .attr("transform", `translate(${width - 100}, 20)`);
+
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", 20)
+                .attr("y1", 0)
+                .attr("y2", 0)
+                .attr("stroke", "#10b981")
+                .attr("stroke-width", 2);
+
+            legend.append("text")
+                .attr("x", 25)
+                .attr("y", 0)
+                .attr("dy", "0.35em")
+                .style("font-size", "12px")
+                .text("Plaintext");
+
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", 20)
+                .attr("y1", 20)
+                .attr("y2", 20)
+                .attr("stroke", "#ef4444")
+                .attr("stroke-width", 2);
+
+            legend.append("text")
+                .attr("x", 25)
+                .attr("y", 20)
+                .attr("dy", "0.35em")
+                .style("font-size", "12px")
+                .text("Ciphertext");
+        }
+
+        function updateGcsEntropyChart() {
+            const margin = {top: 20, right: 80, bottom: 30, left: 50};
+            const width = document.getElementById('gcs-entropy-chart').clientWidth - margin.left - margin.right;
+            const height = 350 - margin.top - margin.bottom;
+
+            // Clear previous chart
+            d3.select("#gcs-entropy-chart").selectAll("*").remove();
+
+            const svg = d3.select("#gcs-entropy-chart")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            if (gcsEntropyData.plaintext.length === 0) {
+                svg.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", height / 2)
+                    .attr("text-anchor", "middle")
+                    .style("font-size", "16px")
+                    .style("fill", "#6b7280")
+                    .text("No data available");
+                return;
+            }
+
+            // Scales
+            const xScale = d3.scaleLinear()
+                .domain([0, Math.max(gcsEntropyData.plaintext.length - 1, 1)])
+                .range([0, width]);
+
+            const maxEntropy = Math.max(
+                d3.max(gcsEntropyData.plaintext) || 0,
+                d3.max(gcsEntropyData.ciphertext) || 0,
+                5
+            );
+
+            const yScale = d3.scaleLinear()
+                .domain([0, maxEntropy])
+                .range([height, 0]);
+
+            // Line generators
+            const plainLine = d3.line()
+                .x((d, i) => xScale(i))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            const cipherLine = d3.line()
+                .x((d, i) => xScale(i))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            // Add axes
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(xScale));
+
+            svg.append("g")
+                .call(d3.axisLeft(yScale));
+
+            // Add axis labels
+            svg.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 0 - margin.left)
+                .attr("x", 0 - (height / 2))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .style("font-size", "12px")
+                .text("Entropy (bits)");
+
+            svg.append("text")
+                .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
+                .style("text-anchor", "middle")
+                .style("font-size", "12px")
+                .text("Packet Number");
+
+            // Add lines
+            if (gcsEntropyData.plaintext.length > 0) {
+                svg.append("path")
+                    .datum(gcsEntropyData.plaintext)
+                    .attr("fill", "none")
+                    .attr("stroke", "#10b981")
+                    .attr("stroke-width", 2)
+                    .attr("d", plainLine);
+            }
+
+            if (gcsEntropyData.ciphertext.length > 0) {
+                svg.append("path")
+                    .datum(gcsEntropyData.ciphertext)
+                    .attr("fill", "none")
+                    .attr("stroke", "#ef4444")
+                    .attr("stroke-width", 2)
+                    .attr("d", cipherLine);
+            }
+
+            // Add legend
+            const legend = svg.append("g")
+                .attr("transform", `translate(${width - 100}, 20)`);
+
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", 20)
+                .attr("y1", 0)
+                .attr("y2", 0)
+                .attr("stroke", "#10b981")
+                .attr("stroke-width", 2);
+
+            legend.append("text")
+                .attr("x", 25)
+                .attr("y", 0)
+                .attr("dy", "0.35em")
+                .style("font-size", "12px")
+                .text("Plaintext");
+
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", 20)
+                .attr("y1", 20)
+                .attr("y2", 20)
+                .attr("stroke", "#ef4444")
+                .attr("stroke-width", 2);
+
+            legend.append("text")
+                .attr("x", 25)
+                .attr("y", 20)
+                .attr("dy", "0.35em")
+                .style("font-size", "12px")
+                .text("Ciphertext");
+        }
+
+        // Initialize charts
+        updateFccEntropyChart();
+        updateGcsEntropyChart();
+
+        // Generate sample data for testing (remove this in production)
+//        function generateSampleData() {
+//            // Sample plaintext data (lower entropy - more predictable patterns)
+//            const plaintextSamples = [
+//                "Hello World! This is a test message.",
+//                "Heartbeat packet from FCC to GCS",
+//                "GPS coordinates: lat=37.7749, lon=-122.4194",
+//                "Battery level: 85%, voltage: 12.6V",
+//                "Altitude: 150m, speed: 25 m/s",
+//                "Mission command: TAKEOFF, height: 50m"
+//            ];
+//
+//            // Sample ciphertext data (higher entropy - more random)
+//            const ciphertextSamples = [
+//                "a8f5f167f44f4964e6c998dee827110c",
+//                "b9e6e278e55e5a75f7da99eff938221d",
+//                "ca07f389f66f6b86f8eb00f0fa49332e",
+//                "db18f4a0f77f7c97f9fc11f1fb5a443f",
+//                "ec29f5b1f88f8da8fa0d22f2fc6b554g",
+//                "fd3af6c2f99f9eb9fb1e33f3fd7c665h"
+//            ];
+//
+//            let sampleIndex = 0;
+//            const interval = setInterval(() => {
+//                if (sampleIndex >= 20) {
+//                    clearInterval(interval);
+//                    return;
+//                }
+//
+//                // Simulate plaintext packet
+//                const plaintextEntropy = calculateEntropy(plaintextSamples[sampleIndex % plaintextSamples.length]);
+//                entropyData.plaintext.push(plaintextEntropy);
+//
+//                // Simulate ciphertext packet
+//                const ciphertextEntropy = calculateEntropy(ciphertextSamples[sampleIndex % ciphertextSamples.length]);
+//                entropyData.ciphertext.push(ciphertextEntropy);
+//
+//                entropyData.timestamps.push(new Date());
+//
+//                // Limit data points
+//                if (entropyData.plaintext.length > maxDataPoints) {
+//                    entropyData.plaintext.shift();
+//                    entropyData.ciphertext.shift();
+//                    entropyData.timestamps.shift();
+//                }
+//
+//                updateFccEntropyChart();
+//                sampleIndex++;
+//            }, 1000);
+//        }
+
+        // Auto-generate sample data for demo purposes
+        //  setTimeout(generateSampleData, 2000);
     </script>
 </body>
 </html>
