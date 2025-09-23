@@ -8,6 +8,7 @@ import json
 import time
 from dotenv import load_dotenv
 from pymavlink import mavutil
+from pymavlink.dialects.v10.ardupilotmega import MAVLink_unknown
 
 load_dotenv()
 
@@ -66,6 +67,7 @@ async def monitor_client():
         })
 
         while True:
+            #asyncio.sleep(0.1)
             # 헤더 읽기 (4 bytes)
             header = sock.recv(4)
             if len(header) < 4:
@@ -74,7 +76,7 @@ async def monitor_client():
 
             cmd, seq, pkt_len = struct.unpack('BBH', header)
             pkt_len = socket.ntohs(pkt_len)
-            print(f"read head cmd={cmd} seq={seq} pkt_len={pkt_len}")
+            #print(f"read head cmd={cmd} seq={seq} pkt_len={pkt_len}")
 
             # 패킷 데이터 읽기
             data_len = pkt_len
@@ -91,7 +93,7 @@ async def monitor_client():
 
             # 패킷 출력 및 웹소켓 전송
             formatted_data = format_packet_data(packet_data)
-            print(f"Packet received (len={len(packet_data)}):")
+            #print(f"Packet received (len={len(packet_data)}):")
             #  print(formatted_data)
 
             packet_type = "unknown"
@@ -130,8 +132,8 @@ async def monitor_client():
 
                 for byte_val in mavlink_data:
                     msg = mav.parse_char(bytes([byte_val]))
-                    if msg:
-                        messages.append(msg.to_dict())
+                    if msg and not isinstance(msg, MAVLink_unknown):
+                        messages.append(msg.to_json())
 
                 if messages:
                     await send_to_websocket(websocket, {
@@ -142,7 +144,7 @@ async def monitor_client():
                         "packet_type": "mavlink",
                         "source": source
                     })
-                    print(f"Parsed {len(messages)} MAVLink messages")
+                    #print(f"Parsed {len(messages)} MAVLink messages")
 
 
     except KeyboardInterrupt:

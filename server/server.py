@@ -55,7 +55,6 @@ async def websocket_handler(request):
     return ws
 
 async def index_handler(request):
-    """메인 페이지 핸들러"""
     html_content = """
 <!DOCTYPE html>
 <html>
@@ -91,7 +90,7 @@ async def index_handler(request):
 <!-- logo -->
 <div class="flex items-center justify-between mb-5">
 <img src="https://www.etri.re.kr/images/kor/sub5/ci_img01.png" alt="한국전자통신연구원" class="h-12">
-<h1 class="text-light-text text-2xl font-bold flex-1 text-center">보안 채널 모니터링 프로그램</h1>
+<h1 class="text-light-text text-2xl font-bold flex-1 text-center">DSM 보안 채널 모니터링</h1>
 <div class="h-12 w-12"></div> <!-- 균형을 위한 빈 공간 -->
 </div>
 
@@ -102,16 +101,16 @@ async def index_handler(request):
                 State Information
             </button>
             <button id="fcc-tab" class="flex-1 py-2 px-4 text-sm font-medium text-center rounded-md transition-colors duration-200 text-gray-600 hover:text-light-accent hover:bg-gray-50" onclick="switchTab('fcc')">
-                FCC (Flight Control Computer)
+                Data Monitoring: FCC -> GCS
             </button>
             <button id="gcs-tab" class="flex-1 py-2 px-4 text-sm font-medium text-center rounded-md transition-colors duration-200 text-gray-600 hover:text-light-accent hover:bg-gray-50" onclick="switchTab('gcs')">
-                GCS (Ground Control Station)
+                Data Monitoring: GCS -> FCC 
             </button>
             <button id="fcc-graph-tab" class="flex-1 py-2 px-4 text-sm font-medium text-center rounded-md transition-colors duration-200 text-gray-600 hover:text-light-accent hover:bg-gray-50" onclick="switchTab('fcc-graph')">
-                FCC -> GCS Graph
+                Visualization: FCC -> GCS
             </button>
              <button id="gcs-graph-tab" class="flex-1 py-2 px-4 text-sm font-medium text-center rounded-md transition-colors duration-200 text-gray-600 hover:text-light-accent hover:bg-gray-50" onclick="switchTab('gcs-graph')">
-                GCS -> FCC Graph
+                Visualization: GCS -> FCC 
             </button>
         </nav>
     </div>
@@ -197,17 +196,25 @@ async def index_handler(request):
         </div>
     </div>
 
-    <div id="fcc-graph-content" class="tab-content hidden flex flex-col gap-5 h-[80vh]">
+    <div id="fcc-graph-content" class="tab-content hidden flex flex-col gap-5 h-[80vh] overflow-y-auto">
         <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
             <h3 class="text-light-text font-bold mb-3 text-center">Packet Entropy Analysis - FCC → GCS</h3>
             <div id="fcc-entropy-chart" class="w-full h-96"></div>
         </div>
+        <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
+            <h3 class="text-light-text font-bold mb-3 text-center">Chi-square Analysis - FCC → GCS</h3>
+            <div id="fcc-chisquare-chart" class="w-full h-96"></div>
+        </div>
     </div>
 
-    <div id="gcs-graph-content" class="tab-content hidden flex flex-col gap-5 h-[80vh]">
+    <div id="gcs-graph-content" class="tab-content hidden flex flex-col gap-5 h-[80vh] overflow-y-auto">
         <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
             <h3 class="text-light-text font-bold mb-3 text-center">Packet Entropy Analysis - GCS → FCC</h3>
             <div id="gcs-entropy-chart" class="w-full h-96"></div>
+        </div>
+        <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
+            <h3 class="text-light-text font-bold mb-3 text-center">Chi-square Analysis - GCS → FCC</h3>
+            <div id="gcs-chisquare-chart" class="w-full h-96"></div>
         </div>
     </div>
 
@@ -308,7 +315,12 @@ async def index_handler(request):
         };
 
         ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
+            let data;
+        try {
+            data = JSON.parse(event.data);
+        } catch (e) {
+            console.error('Invalid JSON:', event.data);
+        }
 
             if (data.type === 'status') {
                 // 모든 textarea에 상태 메시지 추가
@@ -329,7 +341,7 @@ async def index_handler(request):
                     addMessage(activeLog, `[${source.toUpperCase()}] ${data.data}`, 'status');
                     const cleanedState = data.data.trim().replace(/^b['"]/, '').replace(/['"]$/, '');
                     JSON.parse(cleanedState, (key, value) => {
-                        console.log(`Key: ${key}, Value: ${value}`);
+                        //console.log(`Key: ${key}, Value: ${value}`);
                         if (key === 'state') {
                             document.getElementById('dsm-status').innerText = value;
                         }
@@ -362,38 +374,54 @@ async def index_handler(request):
                 }
                 if (data.packet_type === 'ciphertext') {
                     const targetTextarea = source === 'fcc' ? fccCiphertext : gcsCiphertext;
-                    addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
+                    // addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
                     addMessage(targetTextarea, data.data, 'packet-data');
 
                     // Calculate and store entropy for packets
                     if (source === 'fcc') {
+                        //console.log(data.data);
                         const entropy = calculateEntropy(data.data);
+                        // console.log(`Entropy: ${entropy}`);
                         entropyData.ciphertext.push(entropy);
                         entropyData.timestamps.push(new Date());
+
+                        // Calculate and store chi-square for packets
+                        const chiSquare = calculateChiSquare(data.data);
+                        // console.log(`Chi-Square: ${chiSquare}`);
+                        chiSquareData.ciphertext.push(chiSquare);
 
                         // Limit data points for performance
                         if (entropyData.ciphertext.length > maxDataPoints) {
                             entropyData.ciphertext.shift();
                             entropyData.timestamps.shift();
+                            chiSquareData.ciphertext.shift();
                         }
 
                         updateFccEntropyChart();
+                        updateFccChiSquareChart();
                     } else if (source === 'gcs') {
+                        if (data.data === null || data.data.length === 0) return;
                         const entropy = calculateEntropy(data.data);
                         gcsEntropyData.ciphertext.push(entropy);
                         gcsEntropyData.timestamps.push(new Date());
+
+                        // Calculate and store chi-square for packets
+                        const chiSquare = calculateChiSquare(data.data);
+                        gcsChiSquareData.ciphertext.push(chiSquare);
 
                         // Limit data points for performance
                         if (gcsEntropyData.ciphertext.length > maxDataPoints) {
                             gcsEntropyData.ciphertext.shift();
                             gcsEntropyData.timestamps.shift();
+                            gcsChiSquareData.ciphertext.shift();
                         }
 
                         updateGcsEntropyChart();
+                        updateGcsChiSquareChart();
                     }
                 } else if (data.packet_type === 'plaintext') {
                     const targetTextarea = source === 'fcc' ? fccPlaintext : gcsPlaintext;
-                    addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
+                    //addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
                     addMessage(targetTextarea, data.data, 'packet-data');
 
                     // Calculate and store entropy for packets
@@ -401,42 +429,46 @@ async def index_handler(request):
                         const entropy = calculateEntropy(data.data);
                         entropyData.plaintext.push(entropy);
 
-                        // Ensure both arrays have the same length
-                        if (entropyData.plaintext.length > entropyData.ciphertext.length) {
-                            entropyData.ciphertext.push(0);
-                        }
+                        // Calculate and store chi-square for packets
+                        const chiSquare = calculateChiSquare(data.data);
+                        chiSquareData.plaintext.push(chiSquare);
 
                         // Limit data points for performance
                         if (entropyData.plaintext.length > maxDataPoints) {
                             entropyData.plaintext.shift();
+                            chiSquareData.plaintext.shift();
                             if (entropyData.plaintext.length < entropyData.ciphertext.length) {
                                 entropyData.ciphertext.shift();
+                                chiSquareData.ciphertext.shift();
                             }
                         }
 
                         updateFccEntropyChart();
+                        updateFccChiSquareChart();
                     } else if (source === 'gcs') {
                         const entropy = calculateEntropy(data.data);
                         gcsEntropyData.plaintext.push(entropy);
 
-                        // Ensure both arrays have the same length
-                        if (gcsEntropyData.plaintext.length > gcsEntropyData.ciphertext.length) {
-                            gcsEntropyData.ciphertext.push(0);
-                        }
+                        // Calculate and store chi-square for packets
+                        const chiSquare = calculateChiSquare(data.data);
+                        gcsChiSquareData.plaintext.push(chiSquare);
 
                         // Limit data points for performance
                         if (gcsEntropyData.plaintext.length > maxDataPoints) {
                             gcsEntropyData.plaintext.shift();
+                            gcsChiSquareData.plaintext.shift();
                             if (gcsEntropyData.plaintext.length < gcsEntropyData.ciphertext.length) {
                                 gcsEntropyData.ciphertext.shift();
+                                gcsChiSquareData.ciphertext.shift();
                             }
                         }
 
                         updateGcsEntropyChart();
+                        updateGcsChiSquareChart();
                     }
                 } else if (data.packet_type === 'mavlink') {
                     const targetTextarea = source === 'fcc' ? fccMavlink : gcsMavlink;
-                    addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
+                    //addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
                     addMessage(targetTextarea, JSON.stringify(data.data, null, 2), 'packet-data');
                 } else {
                     // 기본적으로 FCC ciphertext에 출력
@@ -477,6 +509,18 @@ async def index_handler(request):
             timestamps: []
         };
 
+        let chiSquareData = {
+            plaintext: [],
+            ciphertext: [],
+            timestamps: []
+        };
+
+        let gcsChiSquareData = {
+            plaintext: [],
+            ciphertext: [],
+            timestamps: []
+        };
+
         let maxDataPoints = 50;
 
         function calculateEntropy(data) {
@@ -493,7 +537,7 @@ async def index_handler(request):
             }
 
             // Calculate entropy using Shannon formula
-            let entropy = 0;
+            let entropy = 0.0;
             const len = bytes.length;
             for (let i = 0; i < 256; i++) {
                 if (frequencies[i] > 0) {
@@ -503,6 +547,36 @@ async def index_handler(request):
             }
 
             return entropy;
+        }
+
+        function calculateChiSquare(data) {
+            if (!data || data.length === 0) return 0;
+
+            // Convert string to bytes if needed
+            const bytes = typeof data === 'string' ?
+                new TextEncoder().encode(data) : data;
+
+            if (bytes.length === 0) return 0;
+
+            // Count frequency of each byte value (0-255)
+            const observed = new Array(256).fill(0);
+            for (let i = 0; i < bytes.length; i++) {
+                observed[bytes[i]]++;
+            }
+
+            // Expected frequency for uniform distribution
+            const expected = bytes.length / 256;
+
+            // Calculate chi-square statistic
+            let chiSquare = 0.0;
+            for (let i = 0; i < 256; i++) {
+                if (expected > 0) {
+                    const diff = observed[i] - expected;
+                    chiSquare += (diff * diff) / expected;
+                }
+            }
+
+            return chiSquare;
         }
 
         function updateFccEntropyChart() {
@@ -539,7 +613,7 @@ async def index_handler(request):
             const maxEntropy = Math.max(
                 d3.max(entropyData.plaintext) || 0,
                 d3.max(entropyData.ciphertext) || 0,
-                5
+                4
             );
 
             const yScale = d3.scaleLinear()
@@ -669,7 +743,7 @@ async def index_handler(request):
             const maxEntropy = Math.max(
                 d3.max(gcsEntropyData.plaintext) || 0,
                 d3.max(gcsEntropyData.ciphertext) || 0,
-                5
+                4
             );
 
             const yScale = d3.scaleLinear()
@@ -765,63 +839,272 @@ async def index_handler(request):
                 .text("Ciphertext");
         }
 
+        function updateFccChiSquareChart() {
+            const margin = {top: 20, right: 80, bottom: 30, left: 50};
+            const width = document.getElementById('fcc-chisquare-chart').clientWidth - margin.left - margin.right;
+            const height = 350 - margin.top - margin.bottom;
+
+            // Clear previous chart
+            d3.select("#fcc-chisquare-chart").selectAll("*").remove();
+
+            const svg = d3.select("#fcc-chisquare-chart")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            if (chiSquareData.plaintext.length === 0) {
+                svg.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", height / 2)
+                    .attr("text-anchor", "middle")
+                    .style("font-size", "16px")
+                    .style("fill", "#6b7280")
+                    .text("No data available");
+                return;
+            }
+
+            // Scales
+            const xScale = d3.scaleLinear()
+                .domain([0, Math.max(chiSquareData.plaintext.length - 1, 1)])
+                .range([0, width]);
+
+            const maxChiSquare = Math.max(
+                d3.max(chiSquareData.plaintext) || 0,
+                d3.max(chiSquareData.ciphertext) || 0,
+                250
+            );
+
+            const yScale = d3.scaleLinear()
+                .domain([0, maxChiSquare])
+                .range([height, 0]);
+
+            // Line generators
+            const plainLine = d3.line()
+                .x((d, i) => xScale(i))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            const cipherLine = d3.line()
+                .x((d, i) => xScale(i))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            // Add axes
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(xScale));
+
+            svg.append("g")
+                .call(d3.axisLeft(yScale));
+
+            // Add axis labels
+            svg.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 0 - margin.left)
+                .attr("x", 0 - (height / 2))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .style("font-size", "12px")
+                .text("Chi-square Value");
+
+            svg.append("text")
+                .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
+                .style("text-anchor", "middle")
+                .style("font-size", "12px")
+                .text("Packet Number");
+
+            // Add lines
+            if (chiSquareData.plaintext.length > 0) {
+                svg.append("path")
+                    .datum(chiSquareData.plaintext)
+                    .attr("fill", "none")
+                    .attr("stroke", "#10b981")
+                    .attr("stroke-width", 2)
+                    .attr("d", plainLine);
+            }
+
+            if (chiSquareData.ciphertext.length > 0) {
+                svg.append("path")
+                    .datum(chiSquareData.ciphertext)
+                    .attr("fill", "none")
+                    .attr("stroke", "#ef4444")
+                    .attr("stroke-width", 2)
+                    .attr("d", cipherLine);
+            }
+
+            // Add legend
+            const legend = svg.append("g")
+                .attr("transform", `translate(${width - 100}, 20)`);
+
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", 20)
+                .attr("y1", 0)
+                .attr("y2", 0)
+                .attr("stroke", "#10b981")
+                .attr("stroke-width", 2);
+
+            legend.append("text")
+                .attr("x", 25)
+                .attr("y", 0)
+                .attr("dy", "0.35em")
+                .style("font-size", "12px")
+                .text("Plaintext");
+
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", 20)
+                .attr("y1", 20)
+                .attr("y2", 20)
+                .attr("stroke", "#ef4444")
+                .attr("stroke-width", 2);
+
+            legend.append("text")
+                .attr("x", 25)
+                .attr("y", 20)
+                .attr("dy", "0.35em")
+                .style("font-size", "12px")
+                .text("Ciphertext");
+        }
+
+        function updateGcsChiSquareChart() {
+            const margin = {top: 20, right: 80, bottom: 30, left: 50};
+            const width = document.getElementById('gcs-chisquare-chart').clientWidth - margin.left - margin.right;
+            const height = 350 - margin.top - margin.bottom;
+
+            // Clear previous chart
+            d3.select("#gcs-chisquare-chart").selectAll("*").remove();
+
+            const svg = d3.select("#gcs-chisquare-chart")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            if (gcsChiSquareData.plaintext.length === 0) {
+                svg.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", height / 2)
+                    .attr("text-anchor", "middle")
+                    .style("font-size", "16px")
+                    .style("fill", "#6b7280")
+                    .text("No data available");
+                return;
+            }
+
+            // Scales
+            const xScale = d3.scaleLinear()
+                .domain([0, Math.max(gcsChiSquareData.plaintext.length - 1, 1)])
+                .range([0, width]);
+
+            const maxChiSquare = Math.max(
+                d3.max(gcsChiSquareData.plaintext) || 0,
+                d3.max(gcsChiSquareData.ciphertext) || 0,
+                250
+            );
+
+            const yScale = d3.scaleLinear()
+                .domain([0, maxChiSquare])
+                .range([height, 0]);
+
+            // Line generators
+            const plainLine = d3.line()
+                .x((d, i) => xScale(i))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            const cipherLine = d3.line()
+                .x((d, i) => xScale(i))
+                .y(d => yScale(d))
+                .curve(d3.curveMonotoneX);
+
+            // Add axes
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(xScale));
+
+            svg.append("g")
+                .call(d3.axisLeft(yScale));
+
+            // Add axis labels
+            svg.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 0 - margin.left)
+                .attr("x", 0 - (height / 2))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .style("font-size", "12px")
+                .text("Chi-square Value");
+
+            svg.append("text")
+                .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
+                .style("text-anchor", "middle")
+                .style("font-size", "12px")
+                .text("Packet Number");
+
+            // Add lines
+            if (gcsChiSquareData.plaintext.length > 0) {
+                svg.append("path")
+                    .datum(gcsChiSquareData.plaintext)
+                    .attr("fill", "none")
+                    .attr("stroke", "#10b981")
+                    .attr("stroke-width", 2)
+                    .attr("d", plainLine);
+            }
+
+            if (gcsChiSquareData.ciphertext.length > 0) {
+                svg.append("path")
+                    .datum(gcsChiSquareData.ciphertext)
+                    .attr("fill", "none")
+                    .attr("stroke", "#ef4444")
+                    .attr("stroke-width", 2)
+                    .attr("d", cipherLine);
+            }
+
+            // Add legend
+            const legend = svg.append("g")
+                .attr("transform", `translate(${width - 100}, 20)`);
+
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", 20)
+                .attr("y1", 0)
+                .attr("y2", 0)
+                .attr("stroke", "#10b981")
+                .attr("stroke-width", 2);
+
+            legend.append("text")
+                .attr("x", 25)
+                .attr("y", 0)
+                .attr("dy", "0.35em")
+                .style("font-size", "12px")
+                .text("Plaintext");
+
+            legend.append("line")
+                .attr("x1", 0)
+                .attr("x2", 20)
+                .attr("y1", 20)
+                .attr("y2", 20)
+                .attr("stroke", "#ef4444")
+                .attr("stroke-width", 2);
+
+            legend.append("text")
+                .attr("x", 25)
+                .attr("y", 20)
+                .attr("dy", "0.35em")
+                .style("font-size", "12px")
+                .text("Ciphertext");
+        }
+
         // Initialize charts
         updateFccEntropyChart();
         updateGcsEntropyChart();
+        updateFccChiSquareChart();
+        updateGcsChiSquareChart();
 
-        // Generate sample data for testing (remove this in production)
-//        function generateSampleData() {
-//            // Sample plaintext data (lower entropy - more predictable patterns)
-//            const plaintextSamples = [
-//                "Hello World! This is a test message.",
-//                "Heartbeat packet from FCC to GCS",
-//                "GPS coordinates: lat=37.7749, lon=-122.4194",
-//                "Battery level: 85%, voltage: 12.6V",
-//                "Altitude: 150m, speed: 25 m/s",
-//                "Mission command: TAKEOFF, height: 50m"
-//            ];
-//
-//            // Sample ciphertext data (higher entropy - more random)
-//            const ciphertextSamples = [
-//                "a8f5f167f44f4964e6c998dee827110c",
-//                "b9e6e278e55e5a75f7da99eff938221d",
-//                "ca07f389f66f6b86f8eb00f0fa49332e",
-//                "db18f4a0f77f7c97f9fc11f1fb5a443f",
-//                "ec29f5b1f88f8da8fa0d22f2fc6b554g",
-//                "fd3af6c2f99f9eb9fb1e33f3fd7c665h"
-//            ];
-//
-//            let sampleIndex = 0;
-//            const interval = setInterval(() => {
-//                if (sampleIndex >= 20) {
-//                    clearInterval(interval);
-//                    return;
-//                }
-//
-//                // Simulate plaintext packet
-//                const plaintextEntropy = calculateEntropy(plaintextSamples[sampleIndex % plaintextSamples.length]);
-//                entropyData.plaintext.push(plaintextEntropy);
-//
-//                // Simulate ciphertext packet
-//                const ciphertextEntropy = calculateEntropy(ciphertextSamples[sampleIndex % ciphertextSamples.length]);
-//                entropyData.ciphertext.push(ciphertextEntropy);
-//
-//                entropyData.timestamps.push(new Date());
-//
-//                // Limit data points
-//                if (entropyData.plaintext.length > maxDataPoints) {
-//                    entropyData.plaintext.shift();
-//                    entropyData.ciphertext.shift();
-//                    entropyData.timestamps.shift();
-//                }
-//
-//                updateFccEntropyChart();
-//                sampleIndex++;
-//            }, 1000);
-//        }
-
-        // Auto-generate sample data for demo purposes
-        //  setTimeout(generateSampleData, 2000);
     </script>
 </body>
 </html>
@@ -829,14 +1112,12 @@ async def index_handler(request):
     return web.Response(text=html_content, content_type='text/html')
 
 def create_app():
-    """웹 애플리케이션 생성"""
     app = web.Application()
     app.router.add_get('/', index_handler)
     app.router.add_get('/ws', websocket_handler)
     return app
 
 async def main():
-    """메인 함수"""
     print(f"Starting visualizing server on {HOST}:{WEB_PORT}")
 
     app = create_app()
