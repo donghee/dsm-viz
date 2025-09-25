@@ -30,7 +30,7 @@ async def websocket_handler(request):
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
                 data = json.loads(msg.data)
-                #  print(f"Received: {data}")
+                print(f"Received: {data}")
 
                 # 모든 연결된 클라이언트에게 브로드캐스트
                 disconnected_clients = set()
@@ -165,10 +165,6 @@ async def index_handler(request):
                         <span class="text-gray-600">RX Bytes:</span>
                         <span id="rx-bytes" class="text-light-accent">0</span>
                     </div>
-                    <div class="flex justify-between">
-                        <span class="text-gray-600">Uptime:</span>
-                        <span id="uptime" class="text-light-accent">00:00:00</span>
-                    </div>
                 </div>
             </div>
 
@@ -269,7 +265,7 @@ async def index_handler(request):
         const gcsPlaintext = document.getElementById('gcs-plaintext');
         const gcsMavlink = document.getElementById('gcs-mavlink');
 
-        const ws = new WebSocket('ws://localhost:8000/ws');
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
 
         // 최대 라인 수 제한 (성능 최적화)
         const MAX_LINES = 100;
@@ -315,12 +311,7 @@ async def index_handler(request):
         };
 
         ws.onmessage = function(event) {
-            let data;
-        try {
-            data = JSON.parse(event.data);
-        } catch (e) {
-            console.error('Invalid JSON:', event.data);
-        }
+            const data = JSON.parse(event.data);
 
             if (data.type === 'status') {
                 // 모든 textarea에 상태 메시지 추가
@@ -339,9 +330,17 @@ async def index_handler(request):
                     // 상태 정보는 active-log에 출력
                     const activeLog = document.getElementById('active-log');
                     addMessage(activeLog, `[${source.toUpperCase()}] ${data.data}`, 'status');
-                    const cleanedState = data.data.trim().replace(/^b['"]/, '').replace(/['"]$/, '');
+                    let cleanedState = {};
+                    if (typeof data.data === 'string') {
+                        // prepare string for JSON parsing
+                        cleanedState = data.data.trim().replace(/^b['"]/, '').replace(/['"]$/, '');
+
+                    } else  {
+                        // data.data[0] is already a object
+                        cleanedState = data.data[0];
+                    }
                     JSON.parse(cleanedState, (key, value) => {
-                        //console.log(`Key: ${key}, Value: ${value}`);
+                        // console.log(`Key: ${key}, Value: ${value}`);
                         if (key === 'state') {
                             document.getElementById('dsm-status').innerText = value;
                         }
@@ -613,7 +612,7 @@ async def index_handler(request):
             const maxEntropy = Math.max(
                 d3.max(entropyData.plaintext) || 0,
                 d3.max(entropyData.ciphertext) || 0,
-                4
+                3
             );
 
             const yScale = d3.scaleLinear()
@@ -743,7 +742,7 @@ async def index_handler(request):
             const maxEntropy = Math.max(
                 d3.max(gcsEntropyData.plaintext) || 0,
                 d3.max(gcsEntropyData.ciphertext) || 0,
-                4
+                3
             );
 
             const yScale = d3.scaleLinear()
@@ -873,7 +872,7 @@ async def index_handler(request):
             const maxChiSquare = Math.max(
                 d3.max(chiSquareData.plaintext) || 0,
                 d3.max(chiSquareData.ciphertext) || 0,
-                250
+                200
             );
 
             const yScale = d3.scaleLinear()
@@ -1003,7 +1002,7 @@ async def index_handler(request):
             const maxChiSquare = Math.max(
                 d3.max(gcsChiSquareData.plaintext) || 0,
                 d3.max(gcsChiSquareData.ciphertext) || 0,
-                250
+                200
             );
 
             const yScale = d3.scaleLinear()
