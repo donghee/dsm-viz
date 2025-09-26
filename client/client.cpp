@@ -52,6 +52,15 @@ private:
     thread ws_thread;
     bool connected;
 
+    void cleanupWebSocket() {
+        if (connected) {
+            ws_client.close(ws_hdl, websocketpp::close::status::normal, "");
+        }
+        if (ws_thread.joinable()) {
+            ws_thread.join();
+        }
+    }
+
     string getMavlinkMessageName(uint32_t msgid) {
         static const map<string, uint32_t> name_to_msgid = MAVLINK_MESSAGE_NAMES;
         static map<uint32_t, string> msgid_to_name;
@@ -80,6 +89,10 @@ public:
         if (ret != SUCCESS) return ret;
 
         return SUCCESS;
+    }
+
+    void deinitialize() {
+        cleanupWebSocket();
     }
 
     int loadConfig() {
@@ -220,6 +233,7 @@ public:
     int monitorClient() {
         int ret = connectWebSocket();
         if (ret != SUCCESS) {
+            cleanupWebSocket();
             return ret;
         }
 
@@ -228,6 +242,7 @@ public:
             {"message", "Connected to " + target_addr + ":" + to_string(target_port)}
         });
         if (ret != SUCCESS) {
+            cleanupWebSocket();
             return ret;
         }
 
@@ -236,6 +251,7 @@ public:
             return ERROR_SOCKET_CREATE;
         }
 
+        ret = SUCCESS; // Initialize return value for main loop
         while (true) {
             this_thread::sleep_for(chrono::milliseconds(1));
 
@@ -245,7 +261,8 @@ public:
             if (received < 4) {
                 cout << "recv: head error....ret=" << received << endl;
                 close(sock);
-                return ERROR_RECV_HEADER;
+                ret = ERROR_RECV_HEADER;
+                break;
             }
 
             uint8_t cmd = header[0];
@@ -264,11 +281,17 @@ public:
                 if (chunk_received == 0) {
                     cout << "recv: data error....len=" << read_len << endl;
                     close(sock);
-                    return ERROR_RECV_DATA;
+                    ret = ERROR_RECV_DATA;
+                    break;
                 }
 
                 packet_data.insert(packet_data.end(), chunk.begin(), chunk.begin() + chunk_received);
                 data_len -= chunk_received;
+            }
+
+            // If data receive error occurred, break from main loop
+            if (ret != SUCCESS) {
+                break;
             }
 
             // Format packet data
@@ -320,7 +343,6 @@ public:
             if (ret != SUCCESS) {
                 cout << "Failed to send packet to WebSocket" << endl;
                 // Continue processing other packets ?
-                return ret;
             }
 
             // MAVLink parsing for plaintext packets
@@ -373,23 +395,16 @@ public:
             }
         }
 
+        // Always clean up resources regardless of how we exit the loop
         close(sock);
-        ws_client.close(ws_hdl, websocketpp::close::status::normal, "");
-        ws_thread.join();
-        return SUCCESS;
+        cleanupWebSocket();
+        return ret;
     }
 
-    int run() {
-        while (true) {
-            int ret = monitorClient();
-            if (ret != SUCCESS) {
-                cout << "Client error code: " << ret << endl;
-                cout << "Restarting client in " << restart_delay << " seconds..." << endl;
-                this_thread::sleep_for(chrono::seconds(restart_delay));
-            }
-        }
-        return SUCCESS;
-    }
+  int run() {
+    int ret = monitorClient();
+    return ret;
+  }
 };
 
 int main() {
@@ -406,6 +421,8 @@ int main() {
         cout << "Client run failed with error code: " << ret << endl;
         return ret;
     }
+
+    client.deinitialize();
 
     return SUCCESS;
 }
