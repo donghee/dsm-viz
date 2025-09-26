@@ -294,10 +294,10 @@ async def index_handler(request):
             }
 
             // 자동 스크롤 최적화 (사용자가 스크롤을 올리지 않은 경우에만)
-            const isAtBottom = textarea.scrollTop >= textarea.scrollHeight - textarea.clientHeight - 10;
-            if (isAtBottom) {
-                textarea.scrollTop = textarea.scrollHeight;
-            }
+            //const isAtBottom = textarea.scrollTop >= textarea.scrollHeight - textarea.clientHeight - 10;
+            //if (isAtBottom) {
+                //textarea.scrollTop = textarea.scrollHeight;
+            //}
         }
 
         ws.onopen = function(event) {
@@ -395,9 +395,6 @@ async def index_handler(request):
                             entropyData.timestamps.shift();
                             chiSquareData.ciphertext.shift();
                         }
-
-                        updateFccEntropyChart();
-                        updateFccChiSquareChart();
                     } else if (source === 'gcs') {
                         if (data.data === null || data.data.length === 0) return;
                         const entropy = calculateEntropy(data.data);
@@ -414,10 +411,9 @@ async def index_handler(request):
                             gcsEntropyData.timestamps.shift();
                             gcsChiSquareData.ciphertext.shift();
                         }
-
-                        updateGcsEntropyChart();
-                        updateGcsChiSquareChart();
                     }
+                    updateEntropyChart(source);
+                    updateChiSquareChart(source);
                 } else if (data.packet_type === 'plaintext') {
                     const targetTextarea = source === 'fcc' ? fccPlaintext : gcsPlaintext;
                     //addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
@@ -441,9 +437,6 @@ async def index_handler(request):
                                 chiSquareData.ciphertext.shift();
                             }
                         }
-
-                        updateFccEntropyChart();
-                        updateFccChiSquareChart();
                     } else if (source === 'gcs') {
                         const entropy = calculateEntropy(data.data);
                         gcsEntropyData.plaintext.push(entropy);
@@ -462,9 +455,9 @@ async def index_handler(request):
                             }
                         }
 
-                        updateGcsEntropyChart();
-                        updateGcsChiSquareChart();
                     }
+                    updateEntropyChart(source);
+                    updateChiSquareChart(source);
                 } else if (data.packet_type === 'mavlink') {
                     const targetTextarea = source === 'fcc' ? fccMavlink : gcsMavlink;
                     //addMessage(targetTextarea, `CMD=${data.cmd} SEQ=${data.seq} LEN=${data.length}`, 'packet-header');
@@ -578,22 +571,23 @@ async def index_handler(request):
             return chiSquare;
         }
 
-        function updateFccEntropyChart() {
+        // Generic chart update function to reduce code duplication
+        function updateChart(config) {
             const margin = {top: 20, right: 80, bottom: 30, left: 50};
-            const width = document.getElementById('fcc-entropy-chart').clientWidth - margin.left - margin.right;
+            const width = document.getElementById(config.chartId).clientWidth - margin.left - margin.right;
             const height = 350 - margin.top - margin.bottom;
 
             // Clear previous chart
-            d3.select("#fcc-entropy-chart").selectAll("*").remove();
+            d3.select(`#${config.chartId}`).selectAll("*").remove();
 
-            const svg = d3.select("#fcc-entropy-chart")
+            const svg = d3.select(`#${config.chartId}`)
                 .append("svg")
                 .attr("width", width + margin.left + margin.right)
                 .attr("height", height + margin.top + margin.bottom)
                 .append("g")
                 .attr("transform", `translate(${margin.left},${margin.top})`);
 
-            if (entropyData.plaintext.length === 0) {
+            if (config.data.plaintext.length === 0) {
                 svg.append("text")
                     .attr("x", width / 2)
                     .attr("y", height / 2)
@@ -606,17 +600,17 @@ async def index_handler(request):
 
             // Scales
             const xScale = d3.scaleLinear()
-                .domain([0, Math.max(entropyData.plaintext.length - 1, 1)])
+                .domain([0, Math.max(config.data.plaintext.length - 1, 1)])
                 .range([0, width]);
 
-            const maxEntropy = Math.max(
-                d3.max(entropyData.plaintext) || 0,
-                d3.max(entropyData.ciphertext) || 0,
-                3
+            const maxValue = Math.max(
+                d3.max(config.data.plaintext) || 0,
+                d3.max(config.data.ciphertext) || 0,
+                config.defaultMaxValue
             );
 
             const yScale = d3.scaleLinear()
-                .domain([0, maxEntropy])
+                .domain([0, maxValue])
                 .range([height, 0]);
 
             // Line generators
@@ -646,7 +640,7 @@ async def index_handler(request):
                 .attr("dy", "1em")
                 .style("text-anchor", "middle")
                 .style("font-size", "12px")
-                .text("Entropy (bits)");
+                .text(config.yAxisLabel);
 
             svg.append("text")
                 .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
@@ -655,18 +649,18 @@ async def index_handler(request):
                 .text("Packet Number");
 
             // Add lines
-            if (entropyData.plaintext.length > 0) {
+            if (config.data.plaintext.length > 0) {
                 svg.append("path")
-                    .datum(entropyData.plaintext)
+                    .datum(config.data.plaintext)
                     .attr("fill", "none")
                     .attr("stroke", "#10b981")
                     .attr("stroke-width", 2)
                     .attr("d", plainLine);
             }
 
-            if (entropyData.ciphertext.length > 0) {
+            if (config.data.ciphertext.length > 0) {
                 svg.append("path")
-                    .datum(entropyData.ciphertext)
+                    .datum(config.data.ciphertext)
                     .attr("fill", "none")
                     .attr("stroke", "#ef4444")
                     .attr("stroke-width", 2)
@@ -708,402 +702,31 @@ async def index_handler(request):
                 .text("Ciphertext");
         }
 
-        function updateGcsEntropyChart() {
-            const margin = {top: 20, right: 80, bottom: 30, left: 50};
-            const width = document.getElementById('gcs-entropy-chart').clientWidth - margin.left - margin.right;
-            const height = 350 - margin.top - margin.bottom;
-
-            // Clear previous chart
-            d3.select("#gcs-entropy-chart").selectAll("*").remove();
-
-            const svg = d3.select("#gcs-entropy-chart")
-                .append("svg")
-                .attr("width", width + margin.left + margin.right)
-                .attr("height", height + margin.top + margin.bottom)
-                .append("g")
-                .attr("transform", `translate(${margin.left},${margin.top})`);
-
-            if (gcsEntropyData.plaintext.length === 0) {
-                svg.append("text")
-                    .attr("x", width / 2)
-                    .attr("y", height / 2)
-                    .attr("text-anchor", "middle")
-                    .style("font-size", "16px")
-                    .style("fill", "#6b7280")
-                    .text("No data available");
-                return;
-            }
-
-            // Scales
-            const xScale = d3.scaleLinear()
-                .domain([0, Math.max(gcsEntropyData.plaintext.length - 1, 1)])
-                .range([0, width]);
-
-            const maxEntropy = Math.max(
-                d3.max(gcsEntropyData.plaintext) || 0,
-                d3.max(gcsEntropyData.ciphertext) || 0,
-                3
-            );
-
-            const yScale = d3.scaleLinear()
-                .domain([0, maxEntropy])
-                .range([height, 0]);
-
-            // Line generators
-            const plainLine = d3.line()
-                .x((d, i) => xScale(i))
-                .y(d => yScale(d))
-                .curve(d3.curveMonotoneX);
-
-            const cipherLine = d3.line()
-                .x((d, i) => xScale(i))
-                .y(d => yScale(d))
-                .curve(d3.curveMonotoneX);
-
-            // Add axes
-            svg.append("g")
-                .attr("transform", `translate(0,${height})`)
-                .call(d3.axisBottom(xScale));
-
-            svg.append("g")
-                .call(d3.axisLeft(yScale));
-
-            // Add axis labels
-            svg.append("text")
-                .attr("transform", "rotate(-90)")
-                .attr("y", 0 - margin.left)
-                .attr("x", 0 - (height / 2))
-                .attr("dy", "1em")
-                .style("text-anchor", "middle")
-                .style("font-size", "12px")
-                .text("Entropy (bits)");
-
-            svg.append("text")
-                .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
-                .style("text-anchor", "middle")
-                .style("font-size", "12px")
-                .text("Packet Number");
-
-            // Add lines
-            if (gcsEntropyData.plaintext.length > 0) {
-                svg.append("path")
-                    .datum(gcsEntropyData.plaintext)
-                    .attr("fill", "none")
-                    .attr("stroke", "#10b981")
-                    .attr("stroke-width", 2)
-                    .attr("d", plainLine);
-            }
-
-            if (gcsEntropyData.ciphertext.length > 0) {
-                svg.append("path")
-                    .datum(gcsEntropyData.ciphertext)
-                    .attr("fill", "none")
-                    .attr("stroke", "#ef4444")
-                    .attr("stroke-width", 2)
-                    .attr("d", cipherLine);
-            }
-
-            // Add legend
-            const legend = svg.append("g")
-                .attr("transform", `translate(${width - 100}, 20)`);
-
-            legend.append("line")
-                .attr("x1", 0)
-                .attr("x2", 20)
-                .attr("y1", 0)
-                .attr("y2", 0)
-                .attr("stroke", "#10b981")
-                .attr("stroke-width", 2);
-
-            legend.append("text")
-                .attr("x", 25)
-                .attr("y", 0)
-                .attr("dy", "0.35em")
-                .style("font-size", "12px")
-                .text("Plaintext");
-
-            legend.append("line")
-                .attr("x1", 0)
-                .attr("x2", 20)
-                .attr("y1", 20)
-                .attr("y2", 20)
-                .attr("stroke", "#ef4444")
-                .attr("stroke-width", 2);
-
-            legend.append("text")
-                .attr("x", 25)
-                .attr("y", 20)
-                .attr("dy", "0.35em")
-                .style("font-size", "12px")
-                .text("Ciphertext");
+        function updateEntropyChart(source) {
+            const data = source === 'fcc' ? entropyData : gcsEntropyData;
+            updateChart({
+                chartId: `${source}-entropy-chart`,
+                data: data,
+                yAxisLabel: 'Entropy (bits)',
+                defaultMaxValue: 3
+            });
         }
 
-        function updateFccChiSquareChart() {
-            const margin = {top: 20, right: 80, bottom: 30, left: 50};
-            const width = document.getElementById('fcc-chisquare-chart').clientWidth - margin.left - margin.right;
-            const height = 350 - margin.top - margin.bottom;
-
-            // Clear previous chart
-            d3.select("#fcc-chisquare-chart").selectAll("*").remove();
-
-            const svg = d3.select("#fcc-chisquare-chart")
-                .append("svg")
-                .attr("width", width + margin.left + margin.right)
-                .attr("height", height + margin.top + margin.bottom)
-                .append("g")
-                .attr("transform", `translate(${margin.left},${margin.top})`);
-
-            if (chiSquareData.plaintext.length === 0) {
-                svg.append("text")
-                    .attr("x", width / 2)
-                    .attr("y", height / 2)
-                    .attr("text-anchor", "middle")
-                    .style("font-size", "16px")
-                    .style("fill", "#6b7280")
-                    .text("No data available");
-                return;
-            }
-
-            // Scales
-            const xScale = d3.scaleLinear()
-                .domain([0, Math.max(chiSquareData.plaintext.length - 1, 1)])
-                .range([0, width]);
-
-            const maxChiSquare = Math.max(
-                d3.max(chiSquareData.plaintext) || 0,
-                d3.max(chiSquareData.ciphertext) || 0,
-                200
-            );
-
-            const yScale = d3.scaleLinear()
-                .domain([0, maxChiSquare])
-                .range([height, 0]);
-
-            // Line generators
-            const plainLine = d3.line()
-                .x((d, i) => xScale(i))
-                .y(d => yScale(d))
-                .curve(d3.curveMonotoneX);
-
-            const cipherLine = d3.line()
-                .x((d, i) => xScale(i))
-                .y(d => yScale(d))
-                .curve(d3.curveMonotoneX);
-
-            // Add axes
-            svg.append("g")
-                .attr("transform", `translate(0,${height})`)
-                .call(d3.axisBottom(xScale));
-
-            svg.append("g")
-                .call(d3.axisLeft(yScale));
-
-            // Add axis labels
-            svg.append("text")
-                .attr("transform", "rotate(-90)")
-                .attr("y", 0 - margin.left)
-                .attr("x", 0 - (height / 2))
-                .attr("dy", "1em")
-                .style("text-anchor", "middle")
-                .style("font-size", "12px")
-                .text("Chi-square Value");
-
-            svg.append("text")
-                .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
-                .style("text-anchor", "middle")
-                .style("font-size", "12px")
-                .text("Packet Number");
-
-            // Add lines
-            if (chiSquareData.plaintext.length > 0) {
-                svg.append("path")
-                    .datum(chiSquareData.plaintext)
-                    .attr("fill", "none")
-                    .attr("stroke", "#10b981")
-                    .attr("stroke-width", 2)
-                    .attr("d", plainLine);
-            }
-
-            if (chiSquareData.ciphertext.length > 0) {
-                svg.append("path")
-                    .datum(chiSquareData.ciphertext)
-                    .attr("fill", "none")
-                    .attr("stroke", "#ef4444")
-                    .attr("stroke-width", 2)
-                    .attr("d", cipherLine);
-            }
-
-            // Add legend
-            const legend = svg.append("g")
-                .attr("transform", `translate(${width - 100}, 20)`);
-
-            legend.append("line")
-                .attr("x1", 0)
-                .attr("x2", 20)
-                .attr("y1", 0)
-                .attr("y2", 0)
-                .attr("stroke", "#10b981")
-                .attr("stroke-width", 2);
-
-            legend.append("text")
-                .attr("x", 25)
-                .attr("y", 0)
-                .attr("dy", "0.35em")
-                .style("font-size", "12px")
-                .text("Plaintext");
-
-            legend.append("line")
-                .attr("x1", 0)
-                .attr("x2", 20)
-                .attr("y1", 20)
-                .attr("y2", 20)
-                .attr("stroke", "#ef4444")
-                .attr("stroke-width", 2);
-
-            legend.append("text")
-                .attr("x", 25)
-                .attr("y", 20)
-                .attr("dy", "0.35em")
-                .style("font-size", "12px")
-                .text("Ciphertext");
-        }
-
-        function updateGcsChiSquareChart() {
-            const margin = {top: 20, right: 80, bottom: 30, left: 50};
-            const width = document.getElementById('gcs-chisquare-chart').clientWidth - margin.left - margin.right;
-            const height = 350 - margin.top - margin.bottom;
-
-            // Clear previous chart
-            d3.select("#gcs-chisquare-chart").selectAll("*").remove();
-
-            const svg = d3.select("#gcs-chisquare-chart")
-                .append("svg")
-                .attr("width", width + margin.left + margin.right)
-                .attr("height", height + margin.top + margin.bottom)
-                .append("g")
-                .attr("transform", `translate(${margin.left},${margin.top})`);
-
-            if (gcsChiSquareData.plaintext.length === 0) {
-                svg.append("text")
-                    .attr("x", width / 2)
-                    .attr("y", height / 2)
-                    .attr("text-anchor", "middle")
-                    .style("font-size", "16px")
-                    .style("fill", "#6b7280")
-                    .text("No data available");
-                return;
-            }
-
-            // Scales
-            const xScale = d3.scaleLinear()
-                .domain([0, Math.max(gcsChiSquareData.plaintext.length - 1, 1)])
-                .range([0, width]);
-
-            const maxChiSquare = Math.max(
-                d3.max(gcsChiSquareData.plaintext) || 0,
-                d3.max(gcsChiSquareData.ciphertext) || 0,
-                200
-            );
-
-            const yScale = d3.scaleLinear()
-                .domain([0, maxChiSquare])
-                .range([height, 0]);
-
-            // Line generators
-            const plainLine = d3.line()
-                .x((d, i) => xScale(i))
-                .y(d => yScale(d))
-                .curve(d3.curveMonotoneX);
-
-            const cipherLine = d3.line()
-                .x((d, i) => xScale(i))
-                .y(d => yScale(d))
-                .curve(d3.curveMonotoneX);
-
-            // Add axes
-            svg.append("g")
-                .attr("transform", `translate(0,${height})`)
-                .call(d3.axisBottom(xScale));
-
-            svg.append("g")
-                .call(d3.axisLeft(yScale));
-
-            // Add axis labels
-            svg.append("text")
-                .attr("transform", "rotate(-90)")
-                .attr("y", 0 - margin.left)
-                .attr("x", 0 - (height / 2))
-                .attr("dy", "1em")
-                .style("text-anchor", "middle")
-                .style("font-size", "12px")
-                .text("Chi-square Value");
-
-            svg.append("text")
-                .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
-                .style("text-anchor", "middle")
-                .style("font-size", "12px")
-                .text("Packet Number");
-
-            // Add lines
-            if (gcsChiSquareData.plaintext.length > 0) {
-                svg.append("path")
-                    .datum(gcsChiSquareData.plaintext)
-                    .attr("fill", "none")
-                    .attr("stroke", "#10b981")
-                    .attr("stroke-width", 2)
-                    .attr("d", plainLine);
-            }
-
-            if (gcsChiSquareData.ciphertext.length > 0) {
-                svg.append("path")
-                    .datum(gcsChiSquareData.ciphertext)
-                    .attr("fill", "none")
-                    .attr("stroke", "#ef4444")
-                    .attr("stroke-width", 2)
-                    .attr("d", cipherLine);
-            }
-
-            // Add legend
-            const legend = svg.append("g")
-                .attr("transform", `translate(${width - 100}, 20)`);
-
-            legend.append("line")
-                .attr("x1", 0)
-                .attr("x2", 20)
-                .attr("y1", 0)
-                .attr("y2", 0)
-                .attr("stroke", "#10b981")
-                .attr("stroke-width", 2);
-
-            legend.append("text")
-                .attr("x", 25)
-                .attr("y", 0)
-                .attr("dy", "0.35em")
-                .style("font-size", "12px")
-                .text("Plaintext");
-
-            legend.append("line")
-                .attr("x1", 0)
-                .attr("x2", 20)
-                .attr("y1", 20)
-                .attr("y2", 20)
-                .attr("stroke", "#ef4444")
-                .attr("stroke-width", 2);
-
-            legend.append("text")
-                .attr("x", 25)
-                .attr("y", 20)
-                .attr("dy", "0.35em")
-                .style("font-size", "12px")
-                .text("Ciphertext");
+        function updateChiSquareChart(source) {
+            const data = source === 'fcc' ? chiSquareData : gcsChiSquareData;
+            updateChart({
+                chartId: `${source}-chisquare-chart`,
+                data: data,
+                yAxisLabel: 'Chi-square Value',
+                defaultMaxValue: 200
+            });
         }
 
         // Initialize charts
-        updateFccEntropyChart();
-        updateGcsEntropyChart();
-        updateFccChiSquareChart();
-        updateGcsChiSquareChart();
-
+        updateEntropyChart('fcc');
+        updateEntropyChart('gcs');
+        updateChiSquareChart('fcc');
+        updateChiSquareChart('gcs');
     </script>
 </body>
 </html>
