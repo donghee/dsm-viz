@@ -515,6 +515,14 @@ async def index_handler(request):
 
         let maxDataPoints = 50;
 
+        // Chart state management object
+        let chartStates = {
+            'fcc-entropy-chart': { initialized: false, svg: null, scales: null, lines: null },
+            'gcs-entropy-chart': { initialized: false, svg: null, scales: null, lines: null },
+            'fcc-chisquare-chart': { initialized: false, svg: null, scales: null, lines: null },
+            'gcs-chisquare-chart': { initialized: false, svg: null, scales: null, lines: null }
+        };
+
         function calculateEntropy(data) {
             if (!data || data.length === 0) return 0;
 
@@ -571,49 +579,33 @@ async def index_handler(request):
             return chiSquare;
         }
 
-        // Generic chart update function to reduce code duplication
-        function updateChart(config) {
+        // Optimized chart initialization function - creates SVG structure once
+        function initializeChart(config) {
             const margin = {top: 20, right: 80, bottom: 30, left: 50};
-            const width = document.getElementById(config.chartId).clientWidth - margin.left - margin.right;
+            const width = window.innerWidth - margin.left - margin.right;
             const height = 350 - margin.top - margin.bottom;
 
-            // Clear previous chart
+            // Clear any existing chart
             d3.select(`#${config.chartId}`).selectAll("*").remove();
 
             const svg = d3.select(`#${config.chartId}`)
                 .append("svg")
                 .attr("width", width + margin.left + margin.right)
-                .attr("height", height + margin.top + margin.bottom)
-                .append("g")
+                .attr("height", height + margin.top + margin.bottom);
+
+            const g = svg.append("g")
                 .attr("transform", `translate(${margin.left},${margin.top})`);
 
-            if (config.data.plaintext.length === 0) {
-                svg.append("text")
-                    .attr("x", width / 2)
-                    .attr("y", height / 2)
-                    .attr("text-anchor", "middle")
-                    .style("font-size", "16px")
-                    .style("fill", "#6b7280")
-                    .text("No data available");
-                return;
-            }
-
-            // Scales
+            // Create scales
             const xScale = d3.scaleLinear()
-                .domain([0, Math.max(config.data.plaintext.length - 1, 1)])
+                .domain([0, maxDataPoints - 1])
                 .range([0, width]);
 
-            const maxValue = Math.max(
-                d3.max(config.data.plaintext) || 0,
-                d3.max(config.data.ciphertext) || 0,
-                config.defaultMaxValue
-            );
-
             const yScale = d3.scaleLinear()
-                .domain([0, maxValue])
+                .domain([0, config.defaultMaxValue])
                 .range([height, 0]);
 
-            // Line generators
+            // Create line generators
             const plainLine = d3.line()
                 .x((d, i) => xScale(i))
                 .y(d => yScale(d))
@@ -624,16 +616,17 @@ async def index_handler(request):
                 .y(d => yScale(d))
                 .curve(d3.curveMonotoneX);
 
-            // Add axes
-            svg.append("g")
-                .attr("transform", `translate(0,${height})`)
-                .call(d3.axisBottom(xScale));
+            // Add axes groups
+            const xAxisGroup = g.append("g")
+                .attr("class", "x-axis")
+                .attr("transform", `translate(0,${height})`);
 
-            svg.append("g")
-                .call(d3.axisLeft(yScale));
+            const yAxisGroup = g.append("g")
+                .attr("class", "y-axis");
 
             // Add axis labels
-            svg.append("text")
+            g.append("text")
+                .attr("class", "y-axis-label")
                 .attr("transform", "rotate(-90)")
                 .attr("y", 0 - margin.left)
                 .attr("x", 0 - (height / 2))
@@ -642,33 +635,39 @@ async def index_handler(request):
                 .style("font-size", "12px")
                 .text(config.yAxisLabel);
 
-            svg.append("text")
+            g.append("text")
+                .attr("class", "x-axis-label")
                 .attr("transform", `translate(${width / 2}, ${height + margin.bottom})`)
                 .style("text-anchor", "middle")
                 .style("font-size", "12px")
                 .text("Packet Number");
 
-            // Add lines
-            if (config.data.plaintext.length > 0) {
-                svg.append("path")
-                    .datum(config.data.plaintext)
-                    .attr("fill", "none")
-                    .attr("stroke", "#10b981")
-                    .attr("stroke-width", 2)
-                    .attr("d", plainLine);
-            }
+            // Add line paths (initially empty)
+            g.append("path")
+                .attr("class", "plaintext-line")
+                .attr("fill", "none")
+                .attr("stroke", "#10b981")
+                .attr("stroke-width", 2);
 
-            if (config.data.ciphertext.length > 0) {
-                svg.append("path")
-                    .datum(config.data.ciphertext)
-                    .attr("fill", "none")
-                    .attr("stroke", "#ef4444")
-                    .attr("stroke-width", 2)
-                    .attr("d", cipherLine);
-            }
+            g.append("path")
+                .attr("class", "ciphertext-line")
+                .attr("fill", "none")
+                .attr("stroke", "#ef4444")
+                .attr("stroke-width", 2);
+
+            // Add "No data" message (initially visible)
+            const noDataText = g.append("text")
+                .attr("class", "no-data-text")
+                .attr("x", width / 2)
+                .attr("y", height / 2)
+                .attr("text-anchor", "middle")
+                .style("font-size", "16px")
+                .style("fill", "#6b7280")
+                .text("No data available");
 
             // Add legend
-            const legend = svg.append("g")
+            const legend = g.append("g")
+                .attr("class", "legend")
                 .attr("transform", `translate(${width - 100}, 20)`);
 
             legend.append("line")
@@ -700,33 +699,146 @@ async def index_handler(request):
                 .attr("dy", "0.35em")
                 .style("font-size", "12px")
                 .text("Ciphertext");
+
+            // Store chart state
+            chartStates[config.chartId] = {
+                initialized: true,
+                svg: svg,
+                g: g,
+                xScale: xScale,
+                yScale: yScale,
+                plainLine: plainLine,
+                cipherLine: cipherLine,
+                xAxisGroup: xAxisGroup,
+                yAxisGroup: yAxisGroup,
+                width: width,
+                height: height,
+                defaultMaxValue: config.defaultMaxValue
+            };
+        }
+
+        // Optimized data update function - only updates line paths and scales
+        function updateChartData(chartId, data) {
+            const state = chartStates[chartId];
+            if (!state || !state.initialized) {
+                return;
+            }
+
+            // Hide/show "no data" message
+            const noDataText = state.g.select(".no-data-text");
+            if (data.plaintext.length === 0 && data.ciphertext.length === 0) {
+                noDataText.style("display", "block");
+                state.g.select(".plaintext-line").attr("d", null);
+                state.g.select(".ciphertext-line").attr("d", null);
+                return;
+            } else {
+                noDataText.style("display", "none");
+            }
+
+            // Update scales
+            const maxDataLength = Math.max(data.plaintext.length, data.ciphertext.length);
+            if (maxDataLength > 0) {
+                state.xScale.domain([0, Math.max(maxDataLength - 1, 1)]);
+            }
+
+            const maxValue = Math.max(
+                d3.max(data.plaintext) || 0,
+                d3.max(data.ciphertext) || 0,
+                state.defaultMaxValue
+            );
+            state.yScale.domain([0, maxValue]);
+
+            // Update line generators with new scales
+            state.plainLine
+                .x((d, i) => state.xScale(i))
+                .y(d => state.yScale(d));
+
+            state.cipherLine
+                .x((d, i) => state.xScale(i))
+                .y(d => state.yScale(d));
+
+            // Update axes
+            state.xAxisGroup.call(d3.axisBottom(state.xScale));
+            state.yAxisGroup.call(d3.axisLeft(state.yScale));
+
+            // Update line paths
+            if (data.plaintext.length > 0) {
+                state.g.select(".plaintext-line")
+                    .datum(data.plaintext)
+                    .attr("d", state.plainLine);
+            } else {
+                state.g.select(".plaintext-line").attr("d", null);
+            }
+
+            if (data.ciphertext.length > 0) {
+                state.g.select(".ciphertext-line")
+                    .datum(data.ciphertext)
+                    .attr("d", state.cipherLine);
+            } else {
+                state.g.select(".ciphertext-line").attr("d", null);
+            }
         }
 
         function updateEntropyChart(source) {
+            const chartId = `${source}-entropy-chart`;
             const data = source === 'fcc' ? entropyData : gcsEntropyData;
-            updateChart({
-                chartId: `${source}-entropy-chart`,
-                data: data,
-                yAxisLabel: 'Entropy (bits)',
-                defaultMaxValue: 3
-            });
+
+            // Initialize chart if not already done
+            if (!chartStates[chartId] || !chartStates[chartId].initialized) {
+                initializeChart({
+                    chartId: chartId,
+                    yAxisLabel: 'Entropy (bits)',
+                    defaultMaxValue: 3
+                });
+            }
+
+            // Update chart data
+            updateChartData(chartId, data);
         }
 
         function updateChiSquareChart(source) {
+            const chartId = `${source}-chisquare-chart`;
             const data = source === 'fcc' ? chiSquareData : gcsChiSquareData;
-            updateChart({
-                chartId: `${source}-chisquare-chart`,
-                data: data,
+
+            // Initialize chart if not already done
+            if (!chartStates[chartId] || !chartStates[chartId].initialized) {
+                initializeChart({
+                    chartId: chartId,
+                    yAxisLabel: 'Chi-square Value',
+                    defaultMaxValue: 200
+                });
+            }
+
+            // Update chart data
+            updateChartData(chartId, data);
+        }
+
+        // Initialize all charts on page load
+        window.addEventListener('load', function() {
+            // Initialize entropy charts
+            initializeChart({
+                chartId: 'fcc-entropy-chart',
+                yAxisLabel: 'Entropy (bits)',
+                defaultMaxValue: 3
+            });
+            initializeChart({
+                chartId: 'gcs-entropy-chart',
+                yAxisLabel: 'Entropy (bits)',
+                defaultMaxValue: 3
+            });
+
+            // Initialize chi-square charts
+            initializeChart({
+                chartId: 'fcc-chisquare-chart',
                 yAxisLabel: 'Chi-square Value',
                 defaultMaxValue: 200
             });
-        }
-
-        // Initialize charts
-        updateEntropyChart('fcc');
-        updateEntropyChart('gcs');
-        updateChiSquareChart('fcc');
-        updateChiSquareChart('gcs');
+            initializeChart({
+                chartId: 'gcs-chisquare-chart',
+                yAxisLabel: 'Chi-square Value',
+                defaultMaxValue: 200
+            });
+        });
     </script>
 </body>
 </html>
