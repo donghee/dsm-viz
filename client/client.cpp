@@ -349,8 +349,10 @@ public:
             if ((cmd == 0x00 || cmd == 0x04 || cmd == 0x01 || cmd == 0x05) && packet_data.size() > 4) {
                 vector<string> mavlink_messages;
 
-                // Parse MAVLink messages from packet data (skip first 4 bytes header)
-                for (size_t i = 4; i < packet_data.size(); i++) {
+                // Parse MAVLink messages from packet data (skip first 4 bytes header in st mode and skip first 28 bytes header in ex mode)
+                #define IP_AND_UDP_HEAD_LEN 28
+                int header_offset = (cmd <= 0x01) ? 4 : 4 + IP_AND_UDP_HEAD_LEN;
+                for (size_t i = header_offset; i < packet_data.size(); i++) {
                     mavlink_message_t msg;
                     mavlink_status_t status;
 
