@@ -6,9 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_TYPE Debug)
 
 # Sanitizer options
-option(USE_ASAN "Enable Address Sanitizer" OFF)
+option(USE_ASAN "Enable Address Sanitizer" ON)
 option(USE_UBSAN "Enable Undefined Behavior Sanitizer" ON)
-option(USE_TSAN "Enable Thread Sanitizer" ON)
+option(USE_TSAN "Enable Thread Sanitizer" OFF)
 
 # Address Sanitizer
 if(USE_ASAN)
@@ -102,6 +102,8 @@ message(STATUS "mavlink_SOURCE_DIR: ${mavlink_SOURCE_DIR}")
 
 # Add executable
 add_executable(client client.cpp)
+
+target_compile_definitions(client PRIVATE MAVLINK_USE_MESSAGE_INFO)
 
 # Include directories
 target_include_directories(client PRIVATE ${WEBSOCKETPP_INCLUDE_DIR} ${mavlink_SOURCE_DIR})

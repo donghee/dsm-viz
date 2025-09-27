@@ -18,6 +18,8 @@
 #include <websocketpp/config/asio_no_tls_client.hpp>
 #include <websocketpp/client.hpp>
 #include <common/mavlink.h>
+#include <mavlink_helpers.h>
+#include <mavlink_get_info.h>
 
 using json = nlohmann::json;
 using namespace std;
@@ -76,6 +78,80 @@ private:
         }
         return "UNKNOWN_" + to_string(msgid);
     }
+
+    const json mavlink_get_message_json(const mavlink_message_t* msg) {
+        json msg_json;
+
+        const mavlink_message_info_t* msg_info = mavlink_get_message_info(msg);
+        if (!msg_info) {
+            return msg_json; // Return empty JSON if message info not found
+        }
+        msg_json["message"] = msg_info->name;
+        msg_json["msgid"] = (int)msg->msgid;
+        msg_json["sysid"] = msg->sysid;
+        msg_json["compid"] = msg->compid;
+        msg_json["seq"] = msg->seq;
+        msg_json["len"] = msg->len;
+        msg_json["checksum"] = (int)msg->checksum;
+
+        for (uint8_t i = 0; i < msg_info->num_fields; i++) {
+            const mavlink_field_info_t& field = msg_info->fields[i];
+
+            // Handle different field types, ignore arrays for simplicity
+            switch (field.type) {
+                case MAVLINK_TYPE_CHAR: {
+                    msg_json["payload"][field.name] = string(1, _MAV_RETURN_char(msg, field.wire_offset));
+                    break;
+                }
+                case MAVLINK_TYPE_UINT8_T: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_uint8_t(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_INT8_T: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_int8_t(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_UINT16_T: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_uint16_t(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_INT16_T: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_int16_t(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_UINT32_T: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_uint32_t(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_INT32_T: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_int32_t(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_UINT64_T: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_uint64_t(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_INT64_T: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_int64_t(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_FLOAT: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_float(msg, field.wire_offset);
+                    break;
+                }
+                case MAVLINK_TYPE_DOUBLE: {
+                    msg_json["payload"][field.name] = _MAV_RETURN_double(msg, field.wire_offset);
+                    break;
+                }
+                default:
+                    // Unsupported type
+                    msg_json["payload"][field.name] = nullptr;
+                    break;
+             }
+        }
+        return msg_json;
+    }
+
 
 public:
     DSMClient() : connected(false) {
@@ -248,6 +324,7 @@ public:
 
         int sock = createTCPSocket();
         if (sock < 0) {
+            cleanupWebSocket();
             return ERROR_SOCKET_CREATE;
         }
 
@@ -301,21 +378,21 @@ public:
             string packet_type = "unknown";
             string source = "unknown";
 
+            if (cmd == 0x00 || cmd == 0x04) {
+                packet_type = "plaintext";
+                source = "fcc"; // RECV
+            }
             if (cmd == 0x01 || cmd == 0x05) {
                 packet_type = "plaintext";
-                source = "gcs";
-            }
-            if (cmd == 0x03 || cmd == 0x07) {
-                packet_type = "ciphertext";
-                source = "gcs";
+                source = "gcs"; // SEND
             }
             if (cmd == 0x02 || cmd == 0x06) {
                 packet_type = "ciphertext";
-                source = "fcc";
+                source = "fcc"; // encrypt RECV
             }
-            if (cmd == 0x00 || cmd == 0x04) {
-                packet_type = "plaintext";
-                source = "fcc";
+            if (cmd == 0x03 || cmd == 0x07) {
+                packet_type = "ciphertext";
+                source = "gcs"; // encrypt SEND
             }
             if (cmd == 16) {
                 packet_type = "state";
@@ -346,7 +423,7 @@ public:
             }
 
             // MAVLink parsing for plaintext packets
-            if ((cmd == 0x00 || cmd == 0x04 || cmd == 0x01 || cmd == 0x05) && packet_data.size() > 4) {
+            if ((cmd == 0x00 || cmd == 0x01 || cmd == 0x04 || cmd == 0x05) && packet_data.size() > 4) {
                 vector<string> mavlink_messages;
 
                 // Parse MAVLink messages from packet data (skip first 4 bytes header in st mode and skip first 28 bytes header in ex mode)
@@ -358,25 +435,11 @@ public:
 
                     if (mavlink_parse_char(MAVLINK_COMM_0, packet_data[i], &msg, &status)) {
                         // Successfully parsed a MAVLink message, convert to JSON
-                        string msg_name = getMavlinkMessageName(msg.msgid);
-                        json mavlink_json = {
-                            {"message", msg_name},
-                            {"msgid", (int)msg.msgid},
-                            {"sysid", msg.sysid},
-                            {"compid", msg.compid},
-                            {"seq", msg.seq},
-                            {"len", msg.len},
-                            {"checksum", (int)msg.checksum}
-                        };
+                        // string msg_name = getMavlinkMessageName(msg.msgid);
+                        const mavlink_message_info_t* msg_info = mavlink_get_message_info(&msg);
+                        const json mavlink_msg_json = mavlink_get_message_json(&msg);
 
-                        // Add payload as hex string
-                        // stringstream payload_hex;
-                        // for (int j = 0; j < msg.len; j++) {
-                        //     payload_hex << hex << setfill('0') << setw(2) << static_cast<int>(msg.payload64[j/8] >> (j%8*8) & 0xFF);
-                        // }
-                        // mavlink_json["payload"] = payload_hex.str();
-
-                        mavlink_messages.push_back(mavlink_json.dump());
+                        mavlink_messages.push_back(mavlink_msg_json.dump());
                     }
                 }
 
