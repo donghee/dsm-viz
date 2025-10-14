@@ -12,3 +12,25 @@
 
 
 
+### 설치및 실행
+
+디렉토리 구조
+
+```
+server/ # 웹소켓 서버
+client/ # 패킷 분석기
+bin/run.sh
+bin/install.sh
+```
+
+설치
+
+```
+./bin/install.sh
+```
+
+
+실행
+```
+./bin/run.sh
+```

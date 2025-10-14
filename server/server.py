@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from aiohttp import web, WSMsgType
 from aiohttp.web_ws import WebSocketResponse
+from aiohttp.web_fileresponse import FileResponse
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -54,6 +55,16 @@ async def websocket_handler(request):
 
     return ws
 
+async def static_handler(request):
+    """정적 파일 핸들러"""
+    filename = request.match_info['filename']
+    file_path = Path(__file__).parent / 'static' / filename
+
+    if not file_path.exists():
+        return web.Response(status=404, text="File not found")
+
+    return FileResponse(file_path)
+
 async def index_handler(request):
     html_content = """
 <!DOCTYPE html>
@@ -62,8 +73,8 @@ async def index_handler(request):
     <title>패킷 모니터링 시각화</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="/static/tailwind.min.js"></script>
+    <script src="/static/d3.v7.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -89,7 +100,7 @@ async def index_handler(request):
 <body class="font-mono bg-light-bg text-light-text p-5">
 <!-- logo -->
 <div class="flex items-center justify-between mb-5">
-<img src="https://www.etri.re.kr/images/kor/sub5/ci_img01.png" alt="한국전자통신연구원" class="h-12">
+<img src="/static/etri.png" alt="한국전자통신연구원" class="h-12">
 <h1 class="text-light-text text-2xl font-bold flex-1 text-center">DSM 보안 채널 모니터링</h1>
 <div class="h-12 w-12"></div> <!-- 균형을 위한 빈 공간 -->
 </div>
@@ -195,22 +206,22 @@ async def index_handler(request):
     <div id="fcc-graph-content" class="tab-content hidden flex flex-col gap-5 h-[80vh] overflow-y-auto">
         <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
             <h3 class="text-light-text font-bold mb-3 text-center">Packet Entropy Analysis - FCC → GCS</h3>
-            <div id="fcc-entropy-chart" class="w-full h-96"></div>
+            <div id="fcc-entropy-chart" class="w-full h-48"></div>
         </div>
         <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
             <h3 class="text-light-text font-bold mb-3 text-center">Chi-square Analysis - FCC → GCS</h3>
-            <div id="fcc-chisquare-chart" class="w-full h-96"></div>
+            <div id="fcc-chisquare-chart" class="w-full h-48"></div>
         </div>
     </div>
 
     <div id="gcs-graph-content" class="tab-content hidden flex flex-col gap-5 h-[80vh] overflow-y-auto">
         <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
             <h3 class="text-light-text font-bold mb-3 text-center">Packet Entropy Analysis - GCS → FCC</h3>
-            <div id="gcs-entropy-chart" class="w-full h-96"></div>
+            <div id="gcs-entropy-chart" class="w-full h-48"></div>
         </div>
         <div class="bg-light-card border border-light-border p-4 rounded-lg shadow-sm">
             <h3 class="text-light-text font-bold mb-3 text-center">Chi-square Analysis - GCS → FCC</h3>
-            <div id="gcs-chisquare-chart" class="w-full h-96"></div>
+            <div id="gcs-chisquare-chart" class="w-full h-48"></div>
         </div>
     </div>
 
@@ -267,6 +278,21 @@ async def index_handler(request):
 
         const ws = new WebSocket(`ws://${window.location.host}/ws`);
 
+        const movingAverageWeight = 0.3;
+
+        let gcsSmoothedEntropy = 0;
+        let gcsSmoothedChiSquare = 0;
+
+        let gcsSmoothedEntropy2 = 0;
+        let gcsSmoothedChiSquare2 = 0;
+
+        let fccSmoothedEntropy = 0;
+        let fccSmoothedChiSquare = 0;
+
+        let fccSmoothedEntropy2 = 0;
+        let fccSmoothedChiSquare2 = 0;
+
+
         // 최대 라인 수 제한 (성능 최적화)
         const MAX_LINES = 100;
 
@@ -321,7 +347,10 @@ async def index_handler(request):
                 addMessage(gcsCiphertext, data.message, 'status');
                 addMessage(gcsPlaintext, data.message, 'status');
                 addMessage(gcsMavlink, data.message, 'status');
-            } else if (data.type === 'packet') {
+                return;
+            } 
+
+            if (data.type === 'packet') {
                 // 패킷의 소스(FCC/GCS)와 타입에 따라 적절한 textarea에 출력
                 const source = data.source || 'fcc'; // 기본값은 fcc
 
@@ -378,38 +407,50 @@ async def index_handler(request):
 
                     // Calculate and store entropy for packets
                     if (source === 'fcc') {
-                        //console.log(data.data);
                         const entropy = calculateEntropy(data.data);
-                        // console.log(`Entropy: ${entropy}`);
-                        entropyData.ciphertext.push(entropy);
+                        fccSmoothedEntropy = fccSmoothedEntropy * (1.0 - movingAverageWeight) + entropy * movingAverageWeight; // Simple moving average
+                        console.log(`Entropy: ${entropy}`);
+                        //entropyData.ciphertext.push(entropy);
+                        entropyData.ciphertext.push(fccSmoothedEntropy);
                         entropyData.timestamps.push(new Date());
 
                         // Calculate and store chi-square for packets
-                        const chiSquare = calculateChiSquare(data.data);
-                        // console.log(`Chi-Square: ${chiSquare}`);
-                        chiSquareData.ciphertext.push(chiSquare);
+                        //const chiSquare = calculateChiSquare(data.data);
+                        const chiSquare = calculateReducedChiSquare(data.data);
+                        fccSmoothedChiSquare = fccSmoothedChiSquare * (1.0 - movingAverageWeight) + chiSquare * movingAverageWeight; // Simple moving average
+                        console.log(`Ciphertext Chi-Square: ${chiSquare}`);
+                        //chiSquareData.ciphertext.push(chiSquare);
+                        chiSquareData.ciphertext.push(fccSmoothedChiSquare);
+                        chiSquareData.timestamps.push(new Date());
 
                         // Limit data points for performance
                         if (entropyData.ciphertext.length > maxDataPoints) {
                             entropyData.ciphertext.shift();
                             entropyData.timestamps.shift();
                             chiSquareData.ciphertext.shift();
+                            chiSquareData.timestamps.shift();
                         }
                     } else if (source === 'gcs') {
                         if (data.data === null || data.data.length === 0) return;
                         const entropy = calculateEntropy(data.data);
-                        gcsEntropyData.ciphertext.push(entropy);
+                        gcsSmoothedEntropy = gcsSmoothedEntropy * (1.0 - movingAverageWeight) + entropy * movingAverageWeight; // Simple moving average
+                        gcsEntropyData.ciphertext.push(gcsSmoothedEntropy);
                         gcsEntropyData.timestamps.push(new Date());
 
                         // Calculate and store chi-square for packets
-                        const chiSquare = calculateChiSquare(data.data);
-                        gcsChiSquareData.ciphertext.push(chiSquare);
+                        //const chiSquare = calculateChiSquare(data.data);
+                        const chiSquare = calculateReducedChiSquare(data.data);
+                        console.log(`Ciphertext Chi-Square: ${chiSquare}`);
+                        gcsSmoothedChiSquare = gcsSmoothedChiSquare * (1.0 - movingAverageWeight) + chiSquare * movingAverageWeight; // Simple moving average
+                        gcsChiSquareData.ciphertext.push(gcsSmoothedChiSquare);
+                        gcsChiSquareData.timestamps.push(new Date());
 
                         // Limit data points for performance
                         if (gcsEntropyData.ciphertext.length > maxDataPoints) {
                             gcsEntropyData.ciphertext.shift();
                             gcsEntropyData.timestamps.shift();
                             gcsChiSquareData.ciphertext.shift();
+                            gcsChiSquareData.timestamps.shift();
                         }
                     }
                     updateEntropyChart(source);
@@ -422,11 +463,17 @@ async def index_handler(request):
                     // Calculate and store entropy for packets
                     if (source === 'fcc') {
                         const entropy = calculateEntropy(data.data);
-                        entropyData.plaintext.push(entropy);
+                        fccSmoothedEntropy2 = fccSmoothedEntropy2 * (1.0 - movingAverageWeight) + entropy * movingAverageWeight; // Simple moving average
+                        //entropyData.plaintext.push(entropy);
+                        entropyData.plaintext.push(fccSmoothedEntropy2);
 
                         // Calculate and store chi-square for packets
-                        const chiSquare = calculateChiSquare(data.data);
-                        chiSquareData.plaintext.push(chiSquare);
+                        //const chiSquare = calculateChiSquare(data.data);
+                        const chiSquare = calculateReducedChiSquare(data.data);
+                        console.log(`Plaintext Chi-Square: ${chiSquare}`);
+                        fccSmoothedChiSquare2 = fccSmoothedChiSquare2 * (1.0 - movingAverageWeight) + chiSquare * movingAverageWeight;
+                        //chiSquareData.plaintext.push(chiSquare);
+                        chiSquareData.plaintext.push(fccSmoothedChiSquare2);
 
                         // Limit data points for performance
                         if (entropyData.plaintext.length > maxDataPoints) {
@@ -439,11 +486,17 @@ async def index_handler(request):
                         }
                     } else if (source === 'gcs') {
                         const entropy = calculateEntropy(data.data);
-                        gcsEntropyData.plaintext.push(entropy);
+                        gcsSmoothedEntropy2 = gcsSmoothedEntropy2 * (1.0 - movingAverageWeight) + entropy * movingAverageWeight;
+                        //gcsEntropyData.plaintext.push(entropy);
+                        gcsEntropyData.plaintext.push(gcsSmoothedEntropy2);
 
                         // Calculate and store chi-square for packets
-                        const chiSquare = calculateChiSquare(data.data);
-                        gcsChiSquareData.plaintext.push(chiSquare);
+                        //const chiSquare = calculateChiSquare(data.data);
+                        const chiSquare = calculateReducedChiSquare(data.data);
+                        console.log(`Plaintext Chi-Square: ${chiSquare}`);
+                        gcsSmoothedChiSquare2 = gcsSmoothedChiSquare2 * (1.0 - movingAverageWeight) + chiSquare * movingAverageWeight;
+                        //gcsChiSquareData.plaintext.push(chiSquare);
+                        gcsChiSquareData.plaintext.push(gcsSmoothedChiSquare2);
 
                         // Limit data points for performance
                         if (gcsEntropyData.plaintext.length > maxDataPoints) {
@@ -579,11 +632,18 @@ async def index_handler(request):
             return chiSquare;
         }
 
+        function calculateReducedChiSquare(data) {
+            if (!data || data.length === 0) return 0;
+            const reduced_data = data.filter(x => x !== "00");
+            const n = reduced_data.length;
+            return calculateChiSquare(reduced_data) / n;
+        }
+
         // Optimized chart initialization function - creates SVG structure once
         function initializeChart(config) {
             const margin = {top: 20, right: 80, bottom: 30, left: 50};
             const width = window.innerWidth - margin.left - margin.right;
-            const height = 350 - margin.top - margin.bottom;
+            const height = 200 - margin.top - margin.bottom;
 
             // Clear any existing chart
             d3.select(`#${config.chartId}`).selectAll("*").remove();
@@ -831,12 +891,12 @@ async def index_handler(request):
             initializeChart({
                 chartId: 'fcc-chisquare-chart',
                 yAxisLabel: 'Chi-square Value',
-                defaultMaxValue: 200
+                defaultMaxValue: 2
             });
             initializeChart({
                 chartId: 'gcs-chisquare-chart',
                 yAxisLabel: 'Chi-square Value',
-                defaultMaxValue: 200
+                defaultMaxValue: 2
             });
         });
     </script>
@@ -849,6 +909,7 @@ def create_app():
     app = web.Application()
     app.router.add_get('/', index_handler)
     app.router.add_get('/ws', websocket_handler)
+    app.router.add_get('/static/{filename}', static_handler)
     return app
 
 async def main():
