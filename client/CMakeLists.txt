@@ -6,8 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_BUILD_TYPE Debug)
 
 # Sanitizer options
-option(USE_ASAN "Enable Address Sanitizer" ON)
-option(USE_UBSAN "Enable Undefined Behavior Sanitizer" ON)
+option(USE_ASAN "Enable Address Sanitizer" OFF)
+option(USE_UBSAN "Enable Undefined Behavior Sanitizer" OFF)
 option(USE_TSAN "Enable Thread Sanitizer" OFF)
 
 # Address Sanitizer
@@ -109,7 +109,8 @@ target_compile_definitions(client PRIVATE MAVLINK_USE_MESSAGE_INFO)
 target_include_directories(client PRIVATE ${WEBSOCKETPP_INCLUDE_DIR} ${mavlink_SOURCE_DIR})
 
 # Link libraries
-target_link_libraries(client
+target_link_libraries(client PRIVATE
+    -static
     Threads::Threads
     nlohmann_json::nlohmann_json
 )

@@ -171,32 +171,28 @@ public:
         cleanupWebSocket();
     }
 
-    int loadConfig() {
-        map<string, string> env_vars;
+  int loadConfig() {
+    // Read configuration from environment variables
+    const char* target_addr_env = getenv("TARGET_ADDR");
+    target_addr = target_addr_env ? string(target_addr_env) : "127.0.0.1";
 
-        // Load .env file
-        ifstream env_file(".env");
-        if (env_file.is_open()) {
-            string line;
-            while (getline(env_file, line)) {
-                size_t pos = line.find('=');
-                if (pos != string::npos) {
-                    string key = line.substr(0, pos);
-                    string value = line.substr(pos + 1);
-                    env_vars[key] = value;
-                }
-            }
-            env_file.close();
-        }
+    const char* target_port_env = getenv("TARGET_PORT");
+    target_port = target_port_env ? stoi(string(target_port_env)) : 14445;
 
-        // Set defaults or use environment variables
-        target_addr = env_vars.count("TARGET_ADDR") ? env_vars["TARGET_ADDR"] : "127.0.0.1";
-        target_port = env_vars.count("TARGET_PORT") ? stoi(env_vars["TARGET_PORT"]) : 14445;
-        websocket_server = env_vars.count("WEBSOCKET_SERVER") ? env_vars["WEBSOCKET_SERVER"] : "ws://127.0.0.1:8000/ws";
-        restart_delay = env_vars.count("RESTART_DELAY") ? stoi(env_vars["RESTART_DELAY"]) : 3;
+    const char* websocket_server_env = getenv("WEBSOCKET_SERVER");
+    websocket_server = websocket_server_env ? string(websocket_server_env) : "ws://127.0.0.1:8000/ws";
 
-        return SUCCESS;
-    }
+    const char* restart_delay_env = getenv("RESTART_DELAY");
+    restart_delay = restart_delay_env ? stoi(string(restart_delay_env)) : 3;
+
+    cout << "Configuration:" << endl;
+    cout << "  TARGET_ADDR: " << target_addr << endl;
+    cout << "  TARGET_PORT: " << target_port << endl;
+    cout << "  WEBSOCKET_SERVER: " << websocket_server << endl;
+    cout << "  RESTART_DELAY: " << restart_delay << " seconds" << endl;
+
+    return SUCCESS;
+  }
 
     int initWebSocket() {
         ws_client.set_access_channels(websocketpp::log::alevel::all);
@@ -274,6 +270,14 @@ public:
             ss << hex << setfill('0') << setw(2) << static_cast<int>(byte);
             formatted.push_back(ss.str());
         }
+
+        // print formatted
+        cout << "Packet Data: ";
+        for (const auto& byte_str : formatted) {
+            cout << byte_str << " ";
+        }
+        cout << endl;
+        
         return formatted;
     }
 
@@ -378,11 +382,11 @@ public:
             string packet_type = "unknown";
             string source = "unknown";
 
-            if (cmd == 0x00 || cmd == 0x04) {
+            if (cmd == 0x00 || cmd == 0x05) { // temp fix for ex mode
                 packet_type = "plaintext";
                 source = "fcc"; // RECV
             }
-            if (cmd == 0x01 || cmd == 0x05) {
+            if (cmd == 0x01 || cmd == 0x04) { // temp fix for ex mode
                 packet_type = "plaintext";
                 source = "gcs"; // SEND
             }
@@ -404,6 +408,13 @@ public:
                 }
                 formatted_data = {ss.str()};
             }
+
+            cout << "Received packet: cmd=0x" << hex << static_cast<int>(cmd)
+                 << " seq=" << dec << static_cast<int>(seq)
+                 << " len=" << pkt_len
+                 << " type=" << packet_type
+                 << " source=" << source
+                 << endl;
 
             // Send packet info to WebSocket
             json packet_msg = {
@@ -473,21 +484,34 @@ public:
 };
 
 int main() {
-    DSMClient client;
 
-    int ret = client.initialize();
-    if (ret != SUCCESS) {
+  // Restart loop
+  while (true) {
+    DSMClient client;
+    try {
+      int ret = client.initialize();
+      if (ret != SUCCESS) {
         cout << "Client initialization failed with error code: " << ret << endl;
         return ret;
-    }
+      }
 
-    ret = client.run();
-    if (ret != SUCCESS) {
+      ret = client.run();
+      if (ret != SUCCESS) {
         cout << "Client run failed with error code: " << ret << endl;
-        return ret;
+      }
+
+      client.deinitialize();
+      cout << "Restarting client in 3 seconds..." << endl;
+      this_thread::sleep_for(chrono::seconds(3));
+
+    } catch (const exception& e) {
+      cout << "Exception: " << e.what() << endl;
+
+      client.deinitialize();
+      cout << "Restarting client in 3 seconds..." << endl;
+      this_thread::sleep_for(chrono::seconds(3));
     }
+  }
 
-    client.deinitialize();
-
-    return SUCCESS;
+  return SUCCESS;
 }
